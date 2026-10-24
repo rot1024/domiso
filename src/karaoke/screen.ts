@@ -6,15 +6,39 @@ import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs } fro
 import { HOP } from "./analyze";
 import { ANALYSIS_RATE, analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
 import { soundRange } from "./trim";
+import { encodeWav, renderMelody } from "./melody";
 import { melodyToMidi } from "./midi";
-import { KaraokePlayer } from "./player";
+import { KaraokePlayer, MAX_SPEED, MIN_SPEED } from "./player";
 import { parseSong, serializeSong, type Song } from "./song";
 import { KaraokeView } from "./view";
 
 /** Audio files the user picked, by file name. */
 let audioFiles = new Map<string, ArrayBuffer>();
-/** Decoded playback buffers, by file name. */
-const decoded = new Map<string, AudioBuffer>();
+/** Object URLs of the picked audio files, by file name, for playback through audio elements. */
+const urls = new Map<string, string>();
+
+function forgetAudio() {
+  for (const u of urls.values()) URL.revokeObjectURL(u);
+  urls.clear();
+}
+
+/**
+ * A fresh audio element for one of the picked files (an element can feed Web Audio only once).
+ * iOS lets media start only from a tap, so it is started muted right away, inside the tap, and stopped.
+ */
+function mediaFor(name: string | undefined): { el: HTMLAudioElement; unlocked: Promise<unknown> } | null {
+  if (!name || !audioFiles.has(name)) return null;
+  if (!urls.has(name)) urls.set(name, URL.createObjectURL(new Blob([audioFiles.get(name)!])));
+  const el = new Audio(urls.get(name));
+  el.preload = "auto";
+  el.muted = true;
+  const unlocked = el
+    .play()
+    .then(() => el.pause())
+    .catch(() => {})
+    .finally(() => (el.muted = false));
+  return { el, unlocked };
+}
 let song: Song | null = null;
 let job: AnalysisJob | null = null;
 let player: KaraokePlayer | null = null;
@@ -61,10 +85,15 @@ export function initKaraoke() {
   };
   $("kSave").onclick = save;
   $("kMidi").onclick = saveMidi;
+  $("kGuideAudio").onclick = saveGuideAudio;
   $("kSing").onclick = () => void sing();
   $("kPlay").onclick = togglePlay;
   $("kRewind").onclick = () => player?.seek(player.position - 5);
   $("kStop").onclick = endSinging;
+  $("kSlower").onclick = () => changeSpeed(-SPEED_STEP);
+  $("kFaster").onclick = () => changeSpeed(SPEED_STEP);
+  $("kSpeed").onclick = () => changeSpeed(1 - prefs.speed); // back to normal
+  showSpeed();
 }
 
 function show(id: "setup" | "karaokeSetup" | "karaoke") {
@@ -80,6 +109,7 @@ function updateButtons() {
   $<HTMLButtonElement>("kSing").disabled = !song;
   $<HTMLButtonElement>("kSave").disabled = !song;
   $<HTMLButtonElement>("kMidi").disabled = !song;
+  $<HTMLButtonElement>("kGuideAudio").disabled = !song;
 }
 
 const isSongFile = (f: File) => /\.json$/i.test(f.name);
@@ -100,7 +130,7 @@ async function openFiles(files: File[]) {
       job = null;
       song = opened;
       audioFiles = new Map();
-      decoded.clear();
+      forgetAudio();
     }
     const known = song ? trackNames(song) : [];
     if (song && audios.every((f) => known.includes(f.name))) {
@@ -126,7 +156,7 @@ async function analyzeAudio(file: File) {
   job?.cancel();
   song = null;
   audioFiles = new Map([[file.name, await file.arrayBuffer()]]);
-  decoded.clear();
+  forgetAudio();
   updateButtons();
   try {
     status("読み込み中…");
@@ -195,6 +225,14 @@ function saveMidi() {
   download(new Blob([melodyToMidi(notes, song.title)], { type: "audio/midi" }), `${song.title}.guide.mid`);
 }
 
+function saveGuideAudio() {
+  if (!song) return;
+  const notes = song.notes.map((n) => ({ ...n, midi: n.midi + 12 * prefs.octave }));
+  const rate = 44100;
+  const wav = encodeWav(renderMelody(notes, rate, song.duration, song.offsetCents), rate);
+  download(new Blob([wav], { type: "audio/wav" }), `${song.title}.guide.wav`);
+}
+
 function download(blob: Blob, name: string) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -206,20 +244,20 @@ function download(blob: Blob, name: string) {
 async function sing() {
   if (!song) return;
   $("kError").textContent = "";
+  // Created before anything is awaited, so they are still inside the tap (see mediaFor).
+  const voice = mediaFor(song.vocalsFile ?? song.audioName);
+  const inst = mediaFor(song.instFile);
+  const original = mediaFor(song.originalFile);
   try {
     const a = await openAudio();
     tracker = a.tracker;
-    const load = async (name: string | undefined) => {
-      if (!name || !audioFiles.has(name)) return null;
-      if (!decoded.has(name)) decoded.set(name, await a.ctx.decodeAudioData(audioFiles.get(name)!.slice(0)));
-      return decoded.get(name)!;
-    };
+    await Promise.all([voice, inst, original].map((m) => m?.unlocked));
     const tracks = {
-      voice: await load(song.vocalsFile ?? song.audioName),
+      voice: voice?.el ?? null,
       // Only the original file may have skipped silence; CLI tracks are already trimmed.
       voiceOffset: song.vocalsFile ? 0 : (song.audioStart ?? 0),
-      inst: await load(song.instFile),
-      original: await load(song.originalFile),
+      inst: inst?.el ?? null,
+      original: original?.el ?? null,
     };
     player = new KaraokePlayer(a.ctx, song, tracks, {
       play: { inst: prefs.playInst, voice: prefs.playVoice, melody: prefs.playMelody, original: prefs.playOriginal },
@@ -227,6 +265,7 @@ async function sing() {
       tolerance: prefs.tolerance,
       octaveFree: prefs.octaveFree,
       extraLatency: prefs.latencyMs / 1000,
+      speed: prefs.speed,
     });
     view = new KaraokeView($<HTMLCanvasElement>("kGraph"), player, {
       tolerance: prefs.tolerance,
@@ -277,6 +316,19 @@ function readout(freq: number | null) {
   const c = Math.round(d!.cents);
   cents.textContent = `${midiName(Math.round(target.midi))}  ${c === 0 ? "±" : c > 0 ? "+" : "−"}${Math.abs(c)}¢`;
   cents.style.color = Math.abs(c) <= prefs.tolerance ? "var(--good)" : "";
+}
+
+const SPEED_STEP = 0.05;
+
+function changeSpeed(delta: number) {
+  prefs.speed = Math.round(Math.max(MIN_SPEED, Math.min(MAX_SPEED, prefs.speed + delta)) * 100) / 100;
+  savePrefs();
+  if (player) player.speed = prefs.speed;
+  showSpeed();
+}
+
+function showSpeed() {
+  $("kSpeed").textContent = `${prefs.speed.toFixed(2)}倍`;
 }
 
 function togglePlay() {

@@ -37,7 +37,8 @@
 - 音声の前後にある無音（最大音量より 60dB 以上小さい部分）は自動でカットする
 - 録音全体が平均律から少しずれていても（A=442 など）、そのずれを推定して判定に反映する
 - 流す音は「伴奏」「お手本の声」「ガイドメロディ（バーから合成）」を自由に組み合わせられる。CLI で作ったデータなら「原曲」も流せる。オクターブを上下に移せる
-- ガイドメロディは MIDI ファイルとしても保存できる
+- ガイドメロディは音声（WAV）や MIDI ファイルとしても保存できる
+- 再生速度を 0.5〜1.5倍で変えられる（音程は変わらない）。バー、ガイドメロディ、採点も速度に合わせて動く
 - 解析データは `*.domiso.json` として保存でき、次回は開くだけで解析を省ける。音声なしで開くとガイド音で歌える
 - 伴奏付きの曲は、下の CLI で声と伴奏に分けてから使う
 - 自分の線がバーより遅れて見えるときは「遅延補正」で合わせる
@@ -53,7 +54,7 @@ pnpm cli 曲.wav --inst 曲-inst.wav    # 公式インストがあれば、位�
 ```
 
 出力先（既定は `./<曲名>/`）に `<曲名>.domiso.json`、`<曲名>.vocals.m4a`、`<曲名>.inst.m4a`、
-`<曲名>.original.m4a`（前後の無音だけカットした原曲）、`<曲名>.guide.mid`（ガイドメロディ）ができる。
+`<曲名>.original.m4a`（前後の無音だけカットした原曲）、`<曲名>.guide.m4a` と `<曲名>.guide.mid`（ガイドメロディの音声と MIDI）ができる。
 音声はすべて同じ時間軸にそろっている。スマホに移し、カラオケの「ファイルを開く」で .json と .m4a をまとめて選ぶ（原曲は省いてもよい）。
 
 必要なもの: Node.js、ffmpeg、Python と audio-separator。
@@ -76,16 +77,18 @@ RTX 5060 Ti では 3分45秒の曲が約30秒で終わる（BS-RoFormer は `--m
 ```sh
 pnpm cli record                 # 鳴り始めを待って録音し、無音が5秒続いたら自動で止めて WAV に保存
 pnpm cli record --process       # 録音後、そのまま分離・解析まで（出力は録音ファイルの隣の <曲名>/）
-pnpm cli record --probe         # 音を流しながら実行すると、再生音が来ている録音デバイスを選んで覚える
+pnpm cli record --list          # 録音できるデバイスの一覧
+pnpm cli record --device スピーカー  # 既定以外の出力デバイスを録る（名前の一部でよい）
 ```
 
 前後の無音はカットして保存する（前 0.2秒・後ろ 0.5秒の余白は残す）。Ctrl+C でもその時点までを保存する。
 `--silence <秒>`、`--threshold <dB>`（既定 50 = -50 dBFS）、`--max <秒>`、`-o <ファイル>` で調整できる。
 
-- Windows（WSL を含む）: Windows 側の `ffmpeg.exe` で DirectShow から録音する。ffmpeg は Windows の再生音を
-  直接は録れないので、再生音が流れ込む録音デバイスが必要（Voicemeeter の B1、VB-Cable の CABLE Output、
-  ステレオ ミキサーなど）。設定方法は `--probe` が案内する
-- Linux: PulseAudio / PipeWire の既定の出力のモニター（`@DEFAULT_MONITOR@`）を録音する。WSL で Linux アプリの
+- Windows（WSL を含む）: Audacity のループバックと同じく、WASAPI で出力デバイスの音を直接録る（既定の出力デバイス。
+  設定は不要）。Windows 標準の PowerShell で `cli/wasapi-loopback.ps1` を動かしている。
+  `--backend dshow` にすると Windows 側の `ffmpeg.exe` で DirectShow から録る（Voicemeeter や VB-Cable、ステレオ ミキサー
+  など、再生音が流れ込む録音デバイスが必要。音を流しながら `--probe` で選べる）
+- Linux: PulseAudio / PipeWire の既定の出力のモニター（`@DEFAULT_MONITOR@`）を録る。WSL で Linux アプリの
   音を録りたいときは `--backend pulse`
 
 ## 開発

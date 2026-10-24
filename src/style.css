@@ -320,6 +320,17 @@ input[type="range"] {
   margin: 6px 0 10px;
 }
 
+.speed {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#kSpeed {
+  font-variant-numeric: tabular-nums;
+}
+
 .controls {
   display: grid;
   grid-template-columns: 1fr 1.4fr 1fr;

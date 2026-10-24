@@ -15,6 +15,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { analyze, HOP } from "../src/karaoke/analyze";
+import { encodeWav, renderMelody } from "../src/karaoke/melody";
 import { melodyToMidi } from "../src/karaoke/midi";
 import { soundRange } from "../src/karaoke/trim";
 import { serializeSong, type Song } from "../src/karaoke/song";
@@ -142,6 +143,11 @@ function main() {
     writeFileSync(join(outDir, jsonFile), serializeSong(song));
     const midiFile = `${title}.guide.mid`;
     writeFileSync(join(outDir, midiFile), melodyToMidi(result.notes, title));
+    // The audio version follows the recording's tuning, so it sits right against the backing track.
+    const guideFile = `${title}.guide.m4a`;
+    const guideWav = join(work, "guide.wav");
+    writeFileSync(guideWav, encodeWav(renderMelody(result.notes, 44100, song.duration, result.offsetCents), 44100));
+    encodeAac(guideWav, join(outDir, guideFile), values.bitrate);
 
     const voiced = result.contour.filter((m) => m !== null).length * HOP;
     console.log(`
@@ -150,7 +156,8 @@ function main() {
   ${vocalsFile}
   ${instFile}${values.inst ? "（公式インスト）" : "（AI 分離）"}
   ${originalFile}（原曲。前後の無音だけカット）
-  ${midiFile}（ガイドメロディ。DAW などで使えます）
+  ${guideFile}（ガイドメロディの音声）
+  ${midiFile}（ガイドメロディの MIDI。DAW などで使えます）
 .domiso.json と .m4a を、domiso のカラオケの「ファイルを開く」からまとめて選んでください（原曲は省いても構いません）。`);
   } finally {
     rmSync(work, { recursive: true, force: true });

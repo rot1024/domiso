@@ -124,6 +124,7 @@
 
       <button id="kSing" class="primary" disabled>歌う</button>
       <button id="kSave" class="secondary" disabled>解析データを保存</button>
+      <button id="kGuideAudio" class="secondary" disabled>ガイドメロディを保存（音声）</button>
       <button id="kMidi" class="secondary" disabled>ガイドメロディを保存（MIDI）</button>
       <button id="kBack" class="secondary">もどる</button>
       <p class="error" id="kError"></p>
@@ -140,6 +141,11 @@
       </div>
       <canvas id="kGraph" class="tall"></canvas>
       <div class="message" id="kResult"></div>
+      <div class="speed">
+        <button id="kSlower">遅く</button>
+        <button id="kSpeed" title="タップで等速に戻す">1.00倍</button>
+        <button id="kFaster">速く</button>
+      </div>
       <div class="controls">
         <button id="kRewind">⏪ 5秒</button>
         <button id="kPlay" class="primary">一時停止</button>

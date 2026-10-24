@@ -1,5 +1,6 @@
 import type { PitchSample } from "../pitch";
 import { centsOff, freqToMidi, midiToFreq } from "../theory";
+import { MELODY_ATTACK, MELODY_PARTIALS, melodyRelease } from "./melody";
 import { noteAt, type Song, type SongNote } from "./song";
 
 /** What plays while you sing; any combination. */
@@ -14,16 +15,31 @@ export interface Playback {
   original: boolean;
 }
 
+/**
+ * Audio elements rather than decoded buffers: they change speed while keeping pitch (preservesPitch),
+ * and long songs don't have to be decoded into memory.
+ */
 export interface Tracks {
   /** The reference singer (the original vocal recording, or a separated vocal track). */
-  voice: AudioBuffer | null;
-  /** Where song time 0 is in the voice buffer, when silence at its start was skipped. */
+  voice: HTMLAudioElement | null;
+  /** Where song time 0 is in the voice file, when silence at its start was skipped. */
   voiceOffset: number;
   /** The backing track. */
-  inst: AudioBuffer | null;
+  inst: HTMLAudioElement | null;
   /** The original song, on the same timeline. */
-  original: AudioBuffer | null;
+  original: HTMLAudioElement | null;
 }
+
+interface ActiveTrack {
+  el: HTMLAudioElement;
+  /** Where song time 0 is in this element's media. */
+  offset: number;
+}
+
+/** Elements further than this from the master clock are moved back in line. */
+const RESYNC_SEC = 0.06;
+export const MIN_SPEED = 0.5;
+export const MAX_SPEED = 1.5;
 
 /** With the backing track also playing, the reference voice is a guide, so it sits lower. */
 const VOICE_GAIN_UNDER_INST = 0.5;
@@ -37,6 +53,8 @@ export interface PlayerOptions {
   octaveFree: boolean;
   /** Extra delay compensation in seconds on top of what the browser reports. */
   extraLatency: number;
+  /** Playback speed; 1 is normal. Pitch stays the same. */
+  speed: number;
 }
 
 export interface NoteStat {
@@ -73,23 +91,64 @@ export class KaraokePlayer {
   trace: { t: number; midi: number | null }[] = [];
   onEnd: () => void = () => {};
 
-  private t0 = 0;
+  /** Song time `pos` was at AudioContext time `ctx`; position runs on from there at `speed`. */
+  private anchor = { ctx: 0, pos: 0 };
   private pausedAt = 0;
   private playing = false;
-  private sources: AudioBufferSourceNode[] = [];
+  private speedValue: number;
+  /** Tracks that play this session; the first is the master clock. */
+  private active: ActiveTrack[] = [];
   private melodyOut: GainNode | null = null;
+  private melodyOn: boolean;
   private scheduledUntil = 0;
   private timer: number | undefined;
 
   constructor(
     private ctx: AudioContext,
     readonly song: Song,
-    private tracks: Tracks,
+    tracks: Tracks,
     private opts: PlayerOptions,
   ) {
     const shift = 12 * opts.octave + song.offsetCents / 100;
     this.notes = song.notes.map((n) => ({ ...n, midi: n.midi + shift }));
     this.stats = this.notes.map(() => ({ total: 0, hit: 0, devSum: 0, devCount: 0 }));
+    this.speedValue = opts.speed;
+
+    const { play } = opts;
+    // The original already contains backing and voice, so it replaces them.
+    const originalOn = play.original && !!tracks.original;
+    const instOn = play.inst && !!tracks.inst && !originalOn;
+    const voiceOn = play.voice && !!tracks.voice && !originalOn;
+    if (originalOn) this.addTrack(tracks.original!, 0, 1);
+    if (instOn) this.addTrack(tracks.inst!, 0, 1);
+    if (voiceOn) this.addTrack(tracks.voice!, tracks.voiceOffset, instOn ? VOICE_GAIN_UNDER_INST : 1);
+    // Without the reference recording, the guide melody carries the tune instead.
+    this.melodyOn = play.melody || (play.voice && !tracks.voice && !originalOn);
+  }
+
+  private addTrack(el: HTMLAudioElement, offset: number, gain: number) {
+    // Routed through a gain node: element.volume is read-only on iOS.
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    this.ctx.createMediaElementSource(el).connect(g).connect(this.ctx.destination);
+    el.preservesPitch = true;
+    this.active.push({ el, offset });
+  }
+
+  get speed(): number {
+    return this.speedValue;
+  }
+
+  /** Changes the speed during playback; the guide melody is rescheduled to match. */
+  set speed(v: number) {
+    const s = Math.max(MIN_SPEED, Math.min(MAX_SPEED, v));
+    if (this.playing) this.anchor = { ctx: this.ctx.currentTime, pos: this.position };
+    this.speedValue = s;
+    for (const t of this.active) t.el.playbackRate = s;
+    if (this.playing && this.melodyOut) {
+      this.startMelody();
+      this.tick();
+    }
   }
 
   get duration(): number {
@@ -102,7 +161,8 @@ export class KaraokePlayer {
 
   /** Current song time in seconds, as heard by the singer. */
   get position(): number {
-    return this.playing ? this.ctx.currentTime - this.t0 : this.pausedAt;
+    if (!this.playing) return this.pausedAt;
+    return Math.min(this.duration, this.anchor.pos + (this.ctx.currentTime - this.anchor.ctx) * this.speedValue);
   }
 
   /**
@@ -117,38 +177,25 @@ export class KaraokePlayer {
   play() {
     if (this.playing) return;
     if (this.pausedAt >= this.duration) this.seek(0);
-    const at = this.ctx.currentTime + 0.05;
-    this.t0 = at - this.pausedAt;
     this.playing = true;
-
-    const { play } = this.opts;
-    const { voice, inst } = this.tracks;
-    // The original already contains backing and voice, so it replaces them.
-    const originalOn = play.original && !!this.tracks.original;
-    const instOn = play.inst && !!inst && !originalOn;
-    const voiceOn = play.voice && !!voice && !originalOn;
-    if (originalOn) this.startTrack(this.tracks.original!, at, 1, 0);
-    if (instOn) this.startTrack(inst!, at, 1, 0);
-    if (voiceOn) this.startTrack(voice!, at, instOn ? VOICE_GAIN_UNDER_INST : 1, this.tracks.voiceOffset);
-    // Without the reference recording, the guide melody carries the tune instead.
-    if (play.melody || (play.voice && !voice && !originalOn)) {
-      this.melodyOut = this.ctx.createGain();
-      this.melodyOut.gain.value = MELODY_GAIN;
-      this.melodyOut.connect(this.ctx.destination);
-      this.scheduledUntil = this.pausedAt;
+    this.anchor = { ctx: this.ctx.currentTime, pos: this.pausedAt };
+    for (const t of this.active) {
+      t.el.playbackRate = this.speedValue;
+      t.el.currentTime = t.offset + this.pausedAt;
+      void t.el.play();
     }
+    if (this.melodyOn) this.startMelody();
     this.timer = window.setInterval(() => this.tick(), 100);
     this.tick();
   }
 
-  private startTrack(buffer: AudioBuffer, at: number, gain: number, offset: number) {
-    const src = this.ctx.createBufferSource();
-    src.buffer = buffer;
-    const g = this.ctx.createGain();
-    g.gain.value = gain;
-    src.connect(g).connect(this.ctx.destination);
-    src.start(at, offset + this.pausedAt, this.duration - this.pausedAt);
-    this.sources.push(src);
+  /** (Re)creates the melody bus; anything already scheduled on the old one goes silent with it. */
+  private startMelody() {
+    this.melodyOut?.disconnect();
+    this.melodyOut = this.ctx.createGain();
+    this.melodyOut.gain.value = MELODY_GAIN;
+    this.melodyOut.connect(this.ctx.destination);
+    this.scheduledUntil = this.position;
   }
 
   pause() {
@@ -176,17 +223,14 @@ export class KaraokePlayer {
 
   private stopOutput() {
     window.clearInterval(this.timer);
-    for (const src of this.sources) {
-      src.stop();
-      src.disconnect();
-    }
-    this.sources = [];
+    for (const t of this.active) t.el.pause();
     // Disconnecting the melody bus silences every oscillator already scheduled on it.
     this.melodyOut?.disconnect();
     this.melodyOut = null;
   }
 
   private tick() {
+    this.syncToMedia();
     const pos = this.position;
     if (pos >= this.duration) {
       this.pause();
@@ -198,6 +242,25 @@ export class KaraokePlayer {
   }
 
   /**
+   * Keeps the clock on the master track (media clocks drift, and playback takes a moment to start: the
+   * bars wait for it) and pulls the other tracks back in line when they wander.
+   */
+  private syncToMedia() {
+    const master = this.active[0];
+    if (!master || !this.playing) return;
+    const mediaPos = master.el.currentTime - master.offset;
+    if (Math.abs(mediaPos - this.position) > 0.03) this.anchor = { ctx: this.ctx.currentTime, pos: mediaPos };
+    for (const t of this.active.slice(1)) {
+      if (Math.abs(t.el.currentTime - t.offset - mediaPos) > RESYNC_SEC) t.el.currentTime = t.offset + mediaPos;
+    }
+  }
+
+  /** AudioContext time at which song time `pos` will be heard, at the current speed. */
+  private ctxTimeOf(pos: number): number {
+    return this.ctx.currentTime + (pos - this.position) / this.speedValue;
+  }
+
+  /**
    * Schedules guide-melody notes starting before `until` (song time). A soft flute-like tone (sine plus a
    * quiet octave) stays clear on top of a band without sounding like the singer.
    */
@@ -205,17 +268,17 @@ export class KaraokePlayer {
     const out = this.melodyOut!;
     for (const n of this.notes) {
       if (n.start < this.scheduledUntil || n.start >= until) continue;
-      const at = Math.max(this.ctx.currentTime, this.t0 + n.start);
-      const end = this.t0 + n.end;
+      const at = Math.max(this.ctx.currentTime, this.ctxTimeOf(n.start));
+      const end = this.ctxTimeOf(n.end);
       if (end <= at) continue;
-      const release = Math.min(0.06, (end - at) / 3);
+      const release = melodyRelease(end - at);
       const g = this.ctx.createGain();
       g.gain.setValueAtTime(0, at);
-      g.gain.linearRampToValueAtTime(1, at + 0.025);
+      g.gain.linearRampToValueAtTime(1, at + MELODY_ATTACK);
       g.gain.setValueAtTime(1, end - release);
       g.gain.linearRampToValueAtTime(0, end);
       g.connect(out);
-      for (const [mult, level] of [[1, 1], [2, 0.25]] as const) {
+      for (const [mult, level] of MELODY_PARTIALS) {
         const osc = this.ctx.createOscillator();
         osc.frequency.value = midiToFreq(n.midi) * mult;
         const lv = this.ctx.createGain();
@@ -230,7 +293,9 @@ export class KaraokePlayer {
 
   handleSample(s: PitchSample) {
     if (!this.playing) return;
-    const t = s.time - this.t0 - this.latency;
+    // The sample was heard `latency` seconds of real time before it arrived; at speed s that is s times as
+    // much song time.
+    const t = this.position - (this.ctx.currentTime - s.time + this.latency) * this.speedValue;
     if (t < 0) return;
     const i = noteAt(this.notes, t);
     let midi = s.freq === null ? null : freqToMidi(s.freq);
@@ -255,7 +320,7 @@ export class KaraokePlayer {
 
   /** Deviation in cents from the note due at song time `t`, or null. */
   deviationAt(freq: number, t: number): { note: SongNote; cents: number } | null {
-    const i = noteAt(this.notes, t - this.latency);
+    const i = noteAt(this.notes, t - this.latency * this.speedValue);
     if (i < 0) return null;
     return { note: this.notes[i], cents: centsOff(freq, this.notes[i].midi, this.opts.octaveFree) };
   }
