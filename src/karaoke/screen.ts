@@ -9,10 +9,12 @@ import { soundRange } from "./trim";
 import { encodeWav, renderMelody } from "./melody";
 import { melodyToMidi } from "./midi";
 import { KaraokePlayer, MAX_SPEED, MIN_SPEED } from "./player";
+import { initLesson, openLesson } from "./lesson";
+import { parsePlan, serializePlan, type Plan } from "./plan";
 import { initReplay, openReplay } from "./replay";
 import { parseSong, serializeSong, type Song } from "./song";
 import { parseTakeFile, serializeTake, songKey, type Take, type TakePoint } from "./take";
-import { deleteTake, saveTake, takesFor } from "./takes-db";
+import { deletePlan, deleteTake, plansFor, savePlan, saveTake, takesFor } from "./takes-db";
 import { KaraokeView } from "./view";
 
 /** Audio files the user picked, by file name. */
@@ -85,6 +87,13 @@ export function initKaraoke() {
     },
   });
   $("kReplay").onclick = () => lastTake && void openReplay(lastTake);
+  initLesson({
+    media: mediaFor,
+    back: () => {
+      show("karaokeSetup");
+      void renderTakes();
+    },
+  });
   checkbox("octaveFree", $<HTMLInputElement>("kOctaveFree"));
 
   const latency = $<HTMLInputElement>("latency");
@@ -121,7 +130,7 @@ export function initKaraoke() {
 }
 
 function show(id: "setup" | "karaokeSetup" | "karaoke") {
-  for (const s of ["setup", "karaokeSetup", "karaoke", "replay"]) $(s).hidden = s !== id;
+  for (const s of ["setup", "karaokeSetup", "karaoke", "replay", "lesson"]) $(s).hidden = s !== id;
   window.scrollTo(0, 0);
 }
 
@@ -147,6 +156,20 @@ async function openFiles(files: File[]) {
   let jsons = files.filter(isSongFile);
   let audios = files.filter((f) => !isSongFile(f));
   try {
+    // A practice plan carries its song: opening one opens the song too.
+    for (const j of [...jsons]) {
+      const plan = parsePlan(await j.text());
+      if (!plan) continue;
+      if (!song || songKey(song) !== songKey(plan.song)) {
+        job?.cancel();
+        job = null;
+        song = plan.song;
+        audioFiles = new Map();
+        forgetAudio();
+      }
+      await savePlan(plan);
+      jsons = jsons.filter((x) => x !== j);
+    }
     // Downloaded takes come back as their .domiso-take.json plus audio.
     for (const j of [...jsons]) {
       const t = parseTakeFile(await j.text());
@@ -167,9 +190,17 @@ async function openFiles(files: File[]) {
       jsons = jsons.filter((x) => x !== j);
       audios = audios.filter((x) => x !== audio);
     }
-    if (!jsons.length && !audios.length) {
-      await renderTakes();
-      return;
+    if (!jsons.length) {
+      // Audio picked with a plan or take belongs to the song now loaded.
+      const known = song ? trackNames(song) : [];
+      for (const f of audios.filter((f) => known.includes(f.name))) audioFiles.set(f.name, await f.arrayBuffer());
+      audios = audios.filter((f) => !known.includes(f.name));
+      if (song) status(describe(song));
+      if (!audios.length) {
+        updateButtons();
+        await renderTakes();
+        return;
+      }
     }
     if (jsons.length > 1) throw new Error("解析データは1つだけ選んでください");
     if (jsons.length) {
@@ -477,8 +508,39 @@ async function finishTake() {
   await renderTakes();
 }
 
+/** Lists this song's practice plans with their progress. */
+async function renderPlans() {
+  const plans = song ? await plansFor(songKey(song)).catch(() => [] as Plan[]) : [];
+  $("kPlansSection").hidden = !plans.length;
+  $("kPlans").replaceChildren(
+    ...plans.map((p) => {
+      const row = document.createElement("div");
+      row.className = "take";
+      const cleared = p.focus.filter((id) => p.progress[id]?.cleared).length;
+      const label = document.createElement("span");
+      label.textContent = `${new Date(p.created).toLocaleString()}・苦手フレーズ ${p.focus.length}個（クリア ${cleared}）${p.finished ? "・完了" : ""}`;
+      const button = (text: string, f: () => void) => {
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.onclick = f;
+        return b;
+      };
+      row.append(
+        label,
+        button("練習する", () => void openLesson(p)),
+        button("保存", () => download(new Blob([serializePlan(p)], { type: "application/json" }), `${p.song.title}.domiso-plan.json`)),
+        button("削除", () => {
+          if (confirm("この練習プランを削除しますか？（元に戻せません）")) void deletePlan(p.id).then(renderPlans);
+        }),
+      );
+      return row;
+    }),
+  );
+}
+
 /** Lists this song's takes, newest first, with replay / download / remove. */
 async function renderTakes() {
+  void renderPlans();
   const list = $("kTakes");
   const takes = song ? await takesFor(songKey(song)).catch(() => [] as Take[]) : [];
   $("kTakesSection").hidden = !takes.length;

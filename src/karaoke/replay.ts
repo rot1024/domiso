@@ -3,7 +3,10 @@ import type { Sound } from "../sound";
 import { midiToFreq } from "../theory";
 import { $, checkbox, prefs, prefsListeners, savePrefs } from "../ui";
 import { median } from "../pitch";
+import { openLesson } from "./lesson";
+import { makePlan, type Plan } from "./plan";
 import { KaraokePlayer, MAX_SPEED, MIN_SPEED } from "./player";
+import { savePlan } from "./takes-db";
 import type { Song } from "./song";
 import { noteAt } from "./song";
 import { takeOnTimeline, type Take } from "./take";
@@ -25,6 +28,8 @@ let player: KaraokePlayer | null = null;
 let view: KaraokeView | null = null;
 let sound: Sound | null = null;
 let loop: { a: number | null; b: number | null } = { a: null, b: null };
+/** Phrases and weak spots found in this take; becomes a practice plan on request. */
+let plan: Plan | null = null;
 
 export function initReplay(h: ReplayHost) {
   host = h;
@@ -65,6 +70,11 @@ export function initReplay(h: ReplayHost) {
     showLoop();
   };
   $("rBack").onclick = close;
+  $("rPlan").onclick = () => {
+    if (!plan) return;
+    const p = plan;
+    void savePlan(p).then(() => openLesson(p));
+  };
   $<HTMLCanvasElement>("rGraph").onclick = (e) => void compareAt(e);
 }
 
@@ -87,7 +97,31 @@ export async function openReplay(t: Take) {
   $("rMessage").textContent = "線をタップすると、その音の「自分の声 → 正しい音」を聞き比べられます";
   keepAwake(true);
   await rebuild(0);
+  plan = makePlan(host.song()!, player!.notes, t.points, { octave: prefs.octave, tolerance: prefs.tolerance });
+  renderWeak();
   requestAnimationFrame(frame);
+}
+
+/** The weak phrases of this take; tapping one loops it. */
+function renderWeak() {
+  if (!plan) return;
+  const p = plan;
+  $("rWeak").replaceChildren(
+    ...p.focus.map((id) => {
+      const ph = p.phrases.find((x) => x.id === id)!;
+      const row = document.createElement("button");
+      row.className = "phrase-row";
+      row.textContent = `${clock(ph.start)}  ${ph.score ?? "-"}点${ph.issues.length ? `・${ph.issues.join("・")}` : ""}`;
+      row.onclick = () => {
+        loop = { a: Math.max(0, ph.start - 0.5), b: ph.end + 0.3 };
+        showLoop();
+        player?.seek(loop.a!);
+        play();
+        updatePlay();
+      };
+      return row;
+    }),
+  );
 }
 
 /** Recreates the player with the current mixer settings (an audio element feeds Web Audio only once). */

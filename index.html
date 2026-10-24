@@ -123,6 +123,12 @@
         <label><input type="checkbox" id="recordTakes" /> 歌を録音してテイクに残す（リプレイ用）</label>
       </section>
 
+      <section id="kPlansSection" hidden>
+        <h2>練習プラン</h2>
+        <p class="hint">苦手フレーズをゆっくりから練習します。進み具合はこの端末に保存され、「保存」でファイルにも書き出せます。</p>
+        <div id="kPlans"></div>
+      </section>
+
       <section id="kTakesSection" hidden>
         <h2>テイク</h2>
         <p class="hint">テイクはこの端末に保存されます。「保存して削除」でファイルに書き出して端末から消せます（ファイルを開けば戻せます）。</p>
@@ -184,6 +190,11 @@
         <span id="rLoop"></span>
         <button id="rClear">解除</button>
       </div>
+      <section>
+        <h2>苦手フレーズ（タップで繰り返し再生）</h2>
+        <div id="rWeak"></div>
+        <button id="rPlan" class="primary">この苦手フレーズで練習する</button>
+      </section>
       <section class="toggles">
         <h2>聴く音</h2>
         <label><input type="checkbox" id="rMine" /> 自分の声</label>
@@ -196,6 +207,29 @@
         <h2>自分の声の位置 <span id="rOffsetLabel"></span></h2>
         <input type="range" id="rOffset" min="-300" max="300" step="10" />
         <p class="hint">自分の声がお手本より遅れて聞こえるなら左へ。</p>
+      </section>
+    </main>
+
+    <main id="lesson" class="screen" hidden>
+      <header class="status">
+        <span id="lTitle"></span>
+        <span id="lScore"></span>
+      </header>
+      <div class="lesson-head">
+        <div id="lLabel"></div>
+        <div id="lStage"></div>
+        <div id="lCount"></div>
+      </div>
+      <canvas id="lGraph" class="tall"></canvas>
+      <div class="message" id="lMessage"></div>
+      <div class="controls">
+        <button id="lPause">一時停止</button>
+        <button id="lSkip">次へ</button>
+        <button id="lStop">やめる</button>
+      </div>
+      <section>
+        <h2>練習するフレーズ</h2>
+        <div id="lPhrases"></div>
       </section>
     </main>
 

@@ -53,6 +53,8 @@ interface ActiveTrack {
   offset: number;
   /** Media seconds per song second (1 except for a take sung at another speed). */
   rate: number;
+  gain: GainNode;
+  kind: "original" | "inst" | "voice" | "mine";
 }
 
 /** Elements further than this from the master clock are moved back in line. */
@@ -143,17 +145,17 @@ export class KaraokePlayer {
     const instOn = play.inst && !!tracks.inst && !originalOn;
     const voiceOn = play.voice && !!tracks.voice && !originalOn;
     const split = !!play.split;
-    if (originalOn) this.addTrack(tracks.original!, 0, 1, split ? 1 : 0);
-    if (instOn) this.addTrack(tracks.inst!, 0, 1);
-    if (voiceOn) this.addTrack(tracks.voice!, tracks.voiceOffset, instOn ? VOICE_GAIN_UNDER_INST : 1, split ? 1 : 0);
+    if (originalOn) this.addTrack("original", tracks.original!, 0, 1, split ? 1 : 0);
+    if (instOn) this.addTrack("inst", tracks.inst!, 0, 1);
+    if (voiceOn) this.addTrack("voice", tracks.voice!, tracks.voiceOffset, instOn ? VOICE_GAIN_UNDER_INST : 1, split ? 1 : 0);
     if (play.mine && tracks.mine) {
-      this.addTrack(tracks.mine, tracks.mineOffset ?? 0, 1, split ? -1 : 0, 1 / (tracks.mineSpeed ?? 1));
+      this.addTrack("mine", tracks.mine, tracks.mineOffset ?? 0, 1, split ? -1 : 0, 1 / (tracks.mineSpeed ?? 1));
     }
     // Without the reference recording, the guide melody carries the tune instead.
     this.melodyOn = play.melody || (play.voice && !tracks.voice && !originalOn);
   }
 
-  private addTrack(el: HTMLAudioElement, offset: number, gain: number, pan = 0, rate = 1) {
+  private addTrack(kind: ActiveTrack["kind"], el: HTMLAudioElement, offset: number, gain: number, pan = 0, rate = 1) {
     // Routed through a gain node: element.volume is read-only on iOS.
     const g = this.ctx.createGain();
     g.gain.value = gain;
@@ -161,7 +163,27 @@ export class KaraokePlayer {
     p.pan.value = pan;
     this.ctx.createMediaElementSource(el).connect(g).connect(p).connect(this.ctx.destination);
     el.preservesPitch = true;
-    this.active.push({ el, offset, rate });
+    this.active.push({ el, offset, rate, gain: g, kind });
+  }
+
+  /**
+   * Turns backing, reference voice and guide melody on or off without rebuilding: the tracks keep
+   * running (muted), so playback can start again without a tap on iOS. Only tracks the player was
+   * built with can be turned on.
+   */
+  setMix(mix: { voice: boolean; inst: boolean; melody: boolean }) {
+    const instOn = mix.inst && this.active.some((t) => t.kind === "inst");
+    for (const t of this.active) {
+      if (t.kind === "inst") t.gain.gain.value = mix.inst ? 1 : 0;
+      if (t.kind === "voice") t.gain.gain.value = mix.voice ? (instOn ? VOICE_GAIN_UNDER_INST : 1) : 0;
+    }
+    const wasOn = this.melodyOn;
+    this.melodyOn = mix.melody || (mix.voice && !this.active.some((t) => t.kind === "voice"));
+    if (this.playing && this.melodyOn && !wasOn) this.startMelody();
+    if (this.playing && !this.melodyOn && wasOn) {
+      this.melodyOut?.disconnect();
+      this.melodyOut = null;
+    }
   }
 
   get speed(): number {

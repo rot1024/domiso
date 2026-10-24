@@ -340,6 +340,46 @@ input[type="range"] {
   font-size: 0.85rem;
 }
 
+.phrase-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 0.85rem;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.phrase-row.cleared {
+  color: var(--good);
+}
+
+#rPlan {
+  margin-top: 8px;
+}
+
+.lesson-head {
+  text-align: center;
+  margin: 10px 0 6px;
+}
+
+#lLabel {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+#lStage {
+  font-size: 1.4rem;
+  font-weight: 800;
+}
+
+#lCount {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .loop {
   display: flex;
   align-items: center;
