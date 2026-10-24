@@ -1,2 +1,4 @@
 node_modules
 dist
+# Local scratch: benchmarks, separated audio, Python env, models. Never committed.
+tmp/
