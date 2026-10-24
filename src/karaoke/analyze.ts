@@ -8,7 +8,9 @@ export const HOP = 0.01;
 const FRAME = 1024;
 const MIN_FREQ = 70;
 const MAX_FREQ = 1200;
-const MIN_CLARITY = 0.85;
+// Lower than the live mic's 0.85: on separated vocals 0.85 drops about a third of the singing, while at 0.7
+// two independent separations still agree on 97% of frames.
+const MIN_CLARITY = 0.7;
 /** Unvoiced gaps up to this long are bridged when the pitch on both sides is close. */
 const MAX_GAP_FRAMES = 8;
 /** A new note starts only when the pitch stays this far (semitones) from the current one... */
