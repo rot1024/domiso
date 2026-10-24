@@ -1,5 +1,6 @@
 import type { PitchSample } from "./pitch";
 import { median } from "./pitch";
+import { SlideAnalyzer } from "./slide";
 import type { Sound } from "./sound";
 import {
   centsOff,
@@ -22,10 +23,14 @@ export interface Settings {
   headphones: boolean;
   /** Allowed deviation in cents. */
   tolerance: number;
+  /** How long the pitch must stay within tolerance to pass, in ms. */
+  holdMs: number;
   /** Number of chords per session; 0 means endless. */
   rounds: number;
   speech: boolean;
   octaveFree: boolean;
+  /** Sing the whole pattern in one breath, sliding from note to note. */
+  slide: boolean;
 }
 
 /**
@@ -67,6 +72,18 @@ export interface NoteResult {
   sungFreq: number | null;
 }
 
+export interface SlideResult {
+  degree: number;
+  target: number;
+  /** Reached the target and held it. */
+  held: boolean;
+  /** First came to rest within tolerance without the voice breaking. */
+  oneShot: boolean;
+  landing: number | null;
+  landingFreq: number | null;
+  broke: boolean;
+}
+
 export interface TrainerState {
   phase: Phase;
   message: string;
@@ -85,7 +102,6 @@ export interface TrainerState {
 
 class Stopped extends Error {}
 
-const HOLD_MS = 400;
 const ONSET_MS = 200;
 
 export class Trainer {
@@ -95,6 +111,7 @@ export class Trainer {
   private listener: ((s: PitchSample) => void) | null = null;
   private results: NoteResult[] = [];
   private cfg: ModeConfig;
+  private silentStreak = 0;
   /** Until this AudioContext time the piano may still be audible through a speaker. */
   private pianoUntil = 0;
 
@@ -104,8 +121,7 @@ export class Trainer {
   ) {
     const m = MODES[settings.mode];
     this.cfg = { ...m };
-    // Without headphones the mic hears the piano, so singing along is impossible.
-    if (!settings.headphones && this.cfg.aid === 0) this.cfg.aid = 1;
+    this.cfg.aid = Math.max(this.cfg.aid, this.minAid());
     this.state = {
       phase: "prompt",
       message: "",
@@ -147,9 +163,8 @@ export class Trainer {
     const { rounds } = this.settings;
     let successStreak = 0;
     let failStreak = 0;
-    let silentStreak = 0;
 
-    await this.say("はじめます");
+    await this.say(this.settings.slide ? "はじめます。声を切らずに歌ってください" : "はじめます");
     for (let round = 0; rounds === 0 || round < rounds; round++) {
       const chord = nextChord(this.cfg.progression, round);
       const tones = chordTones(chord, this.settings.home);
@@ -157,48 +172,17 @@ export class Trainer {
       this.set({ round: round + 1, chord: chordName(chord), tones, order, step: 0, target: null });
 
       await this.promptChord(chord, tones, round === 0);
-
-      let roundClean = true;
-      for (let step = 0; step < order.length; step++) {
-        const degree = order[step];
-        const target = tones[degree];
-        this.set({ step, target });
-
-        // Each note gets one retry after hearing the comparison, so you can correct yourself.
-        let r: NoteResult | null = null;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          await this.promptNote(degree, step);
-          r = await this.listen(degree, target);
-          if (!r.voiced) break;
-          this.results.push(r);
-          this.set({ attempted: this.state.attempted + 1, passed: this.state.passed + (r.passed ? 1 : 0) });
-          await this.feedback(r);
-          if (r.passed) break;
-          roundClean = false;
-        }
-
-        if (r && !r.voiced) {
-          roundClean = false;
-          silentStreak++;
-          if (silentStreak >= 2) {
-            await this.pause();
-            silentStreak = 0;
-          }
-          step--; // Repeat the same note after silence or a pause.
-          continue;
-        }
-        silentStreak = 0;
-      }
+      const clean = this.settings.slide ? await this.slideRound(tones, order) : await this.noteRound(tones, order);
 
       if (this.cfg.adaptive) {
-        if (roundClean) {
+        if (clean) {
           successStreak++;
           failStreak = 0;
         } else {
           failStreak++;
           successStreak = 0;
         }
-        if (successStreak >= 2 && this.cfg.aid < this.maxAid()) {
+        if (successStreak >= 2 && this.cfg.aid < MAX_AID) {
           this.cfg.aid++;
           successStreak = 0;
           this.set({ aid: this.cfg.aid });
@@ -214,12 +198,92 @@ export class Trainer {
     await this.finish();
   }
 
-  private minAid() {
-    return this.settings.headphones ? 0 : 1;
+  /** Each note on its own. Returns whether every note passed on the first try. */
+  private async noteRound(tones: number[], order: number[]): Promise<boolean> {
+    let clean = true;
+    for (let step = 0; step < order.length; step++) {
+      const degree = order[step];
+      const target = tones[degree];
+      this.set({ step, target });
+
+      // Each note gets one retry after hearing the comparison, so you can correct yourself.
+      let r: NoteResult | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        await this.promptNote(degree, step);
+        r = await this.listen(degree, target);
+        if (!r.voiced) break;
+        this.record(r, r.passed);
+        await this.feedback(r);
+        if (r.passed) break;
+        clean = false;
+      }
+
+      if (r && !r.voiced) {
+        clean = false;
+        await this.onSilence();
+        step--; // Repeat the same note after silence or a pause.
+        continue;
+      }
+      this.silentStreak = 0;
+    }
+    return clean;
   }
 
-  private maxAid() {
-    return MAX_AID;
+  /** The whole pattern in one breath. Returns whether every move landed in one go on the first try. */
+  private async slideRound(tones: number[], order: number[]): Promise<boolean> {
+    for (let attempt = 0; attempt < 2; ) {
+      const moves = await this.slidePhrase(tones, order);
+      if (moves === null) {
+        await this.onSilence();
+        continue;
+      }
+      this.silentStreak = 0;
+      const clean = await this.slideFeedback(moves);
+      if (clean) return attempt === 0;
+      attempt++;
+    }
+    return false;
+  }
+
+  /** Returns the result of each move, or null if nothing was sung. An empty array means the first note failed. */
+  private async slidePhrase(tones: number[], order: number[]): Promise<SlideResult[] | null> {
+    const first = order[0];
+    this.set({ step: 0, target: tones[first] });
+    await this.promptNote(first, 0);
+    const r0 = await this.listen(first, tones[first]);
+    if (!r0.voiced) return null;
+    if (!r0.passed) {
+      this.record(r0, false);
+      await this.feedback(r0);
+      return [];
+    }
+
+    const moves: SlideResult[] = [];
+    for (let step = 1; step < order.length; step++) {
+      const degree = order[step];
+      this.set({ step, target: tones[degree] });
+      this.cueNext(degree, tones[degree]);
+      const m = await this.listenSlide(degree, tones[order[step - 1]], tones[degree]);
+      moves.push(m);
+      if (!m.held) break;
+    }
+    this.sound.stopAll();
+    return moves;
+  }
+
+  private async onSilence() {
+    this.silentStreak++;
+    if (this.silentStreak >= 2) {
+      await this.pause();
+      this.silentStreak = 0;
+    }
+  }
+
+  private minAid() {
+    // Without headphones the mic hears the piano: singing along is impossible, and in a slide
+    // the piano would sound while you are still singing.
+    if (this.settings.headphones) return 0;
+    return this.settings.slide ? 2 : 1;
   }
 
   private async promptChord(chord: Chord, tones: number[], first: boolean) {
@@ -254,12 +318,26 @@ export class Trainer {
     if (aid !== 0) this.sound.cue();
   }
 
+  /** Signals "move on" during a slide without stopping the singer. */
+  private cueNext(degree: number, target: number) {
+    const aid = this.cfg.aid;
+    this.set({ phase: "listen", message: `声を切らずに${DEGREE_LABELS[degree]}へ`, inTune: false });
+    if (aid === 0) return; // listenSlide sounds the target itself.
+    if (aid === 1) {
+      this.sound.playNote(target, this.sound.ctx.currentTime, 0.7);
+    } else if (this.cfg.order === "random") {
+      void this.sound.say(DEGREE_LABELS[degree]);
+    } else {
+      this.sound.cue();
+    }
+  }
+
   private listen(degree: number, target: number): Promise<NoteResult> {
-    const { tolerance, octaveFree } = this.settings;
+    const { tolerance, octaveFree, holdMs } = this.settings;
     const aid = this.cfg.aid;
     const ctx = this.sound.ctx;
     const start = ctx.currentTime;
-    const maxSec = aid === 0 ? 6 : 5;
+    const maxSec = (aid === 0 ? 6 : 5) + holdMs / 1000;
     const devs: number[] = [];
     const onsetDevs: number[] = [];
     const freqs: number[] = [];
@@ -269,19 +347,81 @@ export class Trainer {
 
     this.set({ phase: "listen", message: `${DEGREE_LABELS[degree]}を歌って`, inTune: false });
 
+    return this.listenUntil(maxSec, start, (s, done) => {
+      if (aid === 0) lastStrike = this.sustain(target, s.time, lastStrike);
+      if (s.freq === null) {
+        inSince = null;
+        if (this.state.inTune) this.set({ inTune: false });
+        return;
+      }
+      const dev = centsOff(s.freq, target, octaveFree);
+      if (voiceStart === null) voiceStart = s.time;
+      if ((s.time - voiceStart) * 1000 <= ONSET_MS) onsetDevs.push(dev);
+      devs.push(dev);
+      freqs.push(s.freq);
+
+      const ok = Math.abs(dev) <= tolerance;
+      if (ok !== this.state.inTune) this.set({ inTune: ok });
+      if (!ok) {
+        inSince = null;
+        return;
+      }
+      inSince ??= s.time;
+      if ((s.time - inSince) * 1000 >= holdMs) done(true);
+    }).then((passed) => ({
+      degree,
+      target,
+      passed,
+      voiced: voiceStart !== null,
+      deviation: devs.length ? median(devs.slice(-20)) : 0,
+      onset: onsetDevs.length ? median(onsetDevs) : 0,
+      sungFreq: freqs.length ? median(freqs.slice(-15)) : null,
+    }));
+  }
+
+  private listenSlide(degree: number, prev: number, target: number): Promise<SlideResult> {
+    const { tolerance, octaveFree, holdMs } = this.settings;
+    const aid = this.cfg.aid;
+    const ctx = this.sound.ctx;
+    const analyzer = new SlideAnalyzer(prev, target, tolerance, octaveFree, ctx.currentTime);
+    let inSince: number | null = null;
+    let lastStrike = -Infinity;
+
+    return this.listenUntil(4 + holdMs / 1000, ctx.currentTime, (s, done) => {
+      if (aid === 0) lastStrike = this.sustain(target, s.time, lastStrike);
+      const landing = analyzer.push(s.time, s.freq);
+      // A soft ping the moment you land right, so you can tell without looking.
+      if (landing && analyzer.oneShot) this.sound.ping();
+      const ok = s.freq !== null && Math.abs(centsOff(s.freq, target, octaveFree)) <= tolerance;
+      if (ok !== this.state.inTune) this.set({ inTune: ok });
+      if (!ok) {
+        inSince = null;
+        return;
+      }
+      inSince ??= s.time;
+      if ((s.time - inSince) * 1000 >= holdMs) done(true);
+    }).then((held) => ({
+      degree,
+      target,
+      held,
+      oneShot: analyzer.oneShot,
+      landing: analyzer.landing?.cents ?? null,
+      landingFreq: analyzer.landing?.freq ?? null,
+      broke: analyzer.broke,
+    }));
+  }
+
+  /** Feeds samples to `onSample` until it calls done(true) or `maxSec` passes (resolves false). */
+  private listenUntil(
+    maxSec: number,
+    start: number,
+    onSample: (s: PitchSample, done: (ok: boolean) => void) => void,
+  ): Promise<boolean> {
     return new Promise((resolve, reject) => {
-      const done = (passed: boolean) => {
+      const done = (ok: boolean) => {
         this.listener = null;
         clearInterval(guard);
-        resolve({
-          degree,
-          target,
-          passed,
-          voiced: voiceStart !== null,
-          deviation: devs.length ? median(devs.slice(-20)) : 0,
-          onset: onsetDevs.length ? median(onsetDevs) : 0,
-          sungFreq: freqs.length ? median(freqs.slice(-15)) : null,
-        });
+        resolve(ok);
       };
       // The sample stream drives everything, but stop/timeout must work even if it goes quiet.
       const guard = setInterval(() => {
@@ -289,36 +429,22 @@ export class Trainer {
           clearInterval(guard);
           this.listener = null;
           reject(new Stopped());
-        } else if (ctx.currentTime - start > maxSec) done(false);
+        } else if (this.sound.ctx.currentTime - start > maxSec) done(false);
       }, 100);
-
-      this.listener = (s) => {
-        // Singing along: re-strike the decaying piano note so it stays audible.
-        if (aid === 0 && s.time - lastStrike > 1.6) {
-          this.sound.playNote(target, s.time, 1.6, 70);
-          lastStrike = s.time;
-        }
-        if (s.freq === null) {
-          inSince = null;
-          if (this.state.inTune) this.set({ inTune: false });
-          return;
-        }
-        const dev = centsOff(s.freq, target, octaveFree);
-        if (voiceStart === null) voiceStart = s.time;
-        if ((s.time - voiceStart) * 1000 <= ONSET_MS) onsetDevs.push(dev);
-        devs.push(dev);
-        freqs.push(s.freq);
-
-        const ok = Math.abs(dev) <= tolerance;
-        if (ok !== this.state.inTune) this.set({ inTune: ok });
-        if (!ok) {
-          inSince = null;
-          return;
-        }
-        inSince ??= s.time;
-        if ((s.time - inSince) * 1000 >= HOLD_MS) done(true);
-      };
+      this.listener = (s) => onSample(s, done);
     });
+  }
+
+  /** Singing along: re-strike the decaying piano note so it stays audible. */
+  private sustain(target: number, time: number, lastStrike: number): number {
+    if (time - lastStrike <= 1.6) return lastStrike;
+    this.sound.playNote(target, time, 1.6, 70);
+    return time;
+  }
+
+  private record(r: NoteResult, passed: boolean) {
+    this.results.push(r);
+    this.set({ attempted: this.state.attempted + 1, passed: this.state.passed + (passed ? 1 : 0) });
   }
 
   private async feedback(r: NoteResult) {
@@ -332,7 +458,7 @@ export class Trainer {
       return;
     }
     const dir = r.deviation < 0 ? "低い" : "高い";
-    const amount = Math.abs(r.deviation) > 150 ? "かなり" : Math.abs(r.deviation) > 60 ? "" : "少し";
+    const amount = degreeOf(r.deviation);
     this.set({ phase: "feedback", message: `${label}が${amount}${dir} (${Math.round(r.deviation)}¢)` });
     if (this.settings.speech) {
       await this.say(`${amount}${dir}`);
@@ -340,12 +466,65 @@ export class Trainer {
       this.sound.fail(now);
       await this.wait(0.4);
     }
-    if (r.sungFreq !== null) {
-      const at = this.sound.ctx.currentTime + 0.05;
-      const end = this.sound.compare(r.sungFreq, r.target, at);
-      this.pianoUntil = end + 0.2;
-      await this.wait(end - at + 0.3);
+    if (r.sungFreq !== null) await this.compare(r.sungFreq, r.target);
+  }
+
+  /** Summarizes a slide phrase and points out the worst move. Returns whether every move was one-shot. */
+  private async slideFeedback(moves: SlideResult[]): Promise<boolean> {
+    if (moves.length === 0) return false; // The first note failed and already got feedback.
+    for (const m of moves) {
+      if (m.landing !== null) {
+        this.results.push({
+          degree: m.degree,
+          target: m.target,
+          passed: m.oneShot,
+          voiced: true,
+          deviation: m.landing,
+          onset: m.landing,
+          sungFreq: m.landingFreq,
+        });
+      }
     }
+    const hits = moves.filter((m) => m.oneShot).length;
+    const total = this.state.order.length - 1;
+    this.set({ attempted: this.state.attempted + total, passed: this.state.passed + hits });
+
+    if (hits === total) {
+      this.set({ phase: "feedback", message: `全部一発! (${hits}/${total})` });
+      this.sound.pass();
+      await this.say("全部一発");
+      await this.wait(0.3);
+      return true;
+    }
+
+    // Worst move: one that never arrived, then a broken voice, then the biggest landing error.
+    const misses = moves.filter((m) => !m.oneShot);
+    const score = (m: SlideResult) => (!m.held ? 3000 : m.broke ? 2000 : 0) + Math.abs(m.landing ?? 0);
+    const worst = misses.reduce((a, b) => (score(b) > score(a) ? b : a));
+    const label = DEGREE_LABELS[worst.degree];
+    let text: string;
+    if (worst.broke) text = `${label}で声が途切れた`;
+    else if (worst.landing === null) text = `${label}にたどり着けなかった`;
+    else text = `${label}が${degreeOf(worst.landing)}${worst.landing < 0 ? "低く" : "高く"}着地`;
+
+    this.set({
+      phase: "feedback",
+      message: `一発 ${hits}/${total}・${text}${worst.landing !== null && !worst.broke ? ` (${Math.round(worst.landing)}¢)` : ""}`,
+    });
+    if (this.settings.speech) await this.say(text);
+    else {
+      this.sound.fail();
+      await this.wait(0.4);
+    }
+    if (worst.landingFreq !== null && !worst.broke) await this.compare(worst.landingFreq, worst.target);
+    return false;
+  }
+
+  private async compare(sungFreq: number, target: number) {
+    const at = this.sound.ctx.currentTime + 0.05;
+    const end = this.sound.compare(sungFreq, target, at);
+    this.pianoUntil = end + 0.2;
+    await this.wait(end - at + 0.3);
   }
 
   private async pause() {
@@ -378,7 +557,7 @@ export class Trainer {
   private async finish() {
     const { passed, attempted } = this.state;
     const rate = attempted ? Math.round((passed / attempted) * 100) : 0;
-    const summary = [`おわり。正解率${rate}パーセント`];
+    const summary = [`おわり。${this.settings.slide ? "一発率" : "正解率"}${rate}パーセント`];
     const bias = this.biasComment();
     if (bias) summary.push(bias);
     this.set({ phase: "done", message: summary.join("。"), target: null });
@@ -420,4 +599,9 @@ export class Trainer {
   private check() {
     if (this.stopped) throw new Stopped();
   }
+}
+
+function degreeOf(cents: number): string {
+  const a = Math.abs(cents);
+  return a > 150 ? "かなり" : a > 60 ? "" : "少し";
 }

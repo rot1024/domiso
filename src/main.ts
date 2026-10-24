@@ -9,10 +9,12 @@ interface Prefs {
   voice: string;
   mode: Mode;
   tolerance: number;
+  holdMs: number;
   rounds: number;
   headphones: boolean;
   speech: boolean;
   octaveFree: boolean;
+  slide: boolean;
 }
 
 const PREFS_KEY = "domiso:prefs";
@@ -20,10 +22,12 @@ const prefs: Prefs = {
   voice: "high-male",
   mode: "unison",
   tolerance: 30,
+  holdMs: 1000,
   rounds: 10,
   headphones: true,
   speech: true,
   octaveFree: false,
+  slide: false,
   ...loadPrefs(),
 };
 
@@ -73,7 +77,7 @@ function choices<K extends keyof Prefs>(
   render();
 }
 
-function checkbox(key: "headphones" | "speech" | "octaveFree") {
+function checkbox(key: "headphones" | "speech" | "octaveFree" | "slide") {
   const el = $<HTMLInputElement>(key);
   el.checked = prefs[key];
   el.onchange = () => {
@@ -85,7 +89,9 @@ function checkbox(key: "headphones" | "speech" | "octaveFree") {
 
 function updateHint() {
   const hint =
-    !prefs.headphones && prefs.mode === "unison"
+    !prefs.headphones && prefs.slide
+      ? "イヤホンなしのスライドでは、ピアノは和音だけ鳴らし、次の音へは合図音で進みます。"
+      : !prefs.headphones && prefs.mode === "unison"
       ? "イヤホンなしではピアノの音をマイクが拾うため、ピアノの後に歌う方式になります。"
       : !prefs.headphones
         ? "イヤホンなしの場合、ピアノが鳴っている間は判定しません。"
@@ -108,6 +114,12 @@ choices($("tolerance"), "tolerance", [
   { value: 30, label: "ふつう ±30¢" },
   { value: 15, label: "厳しめ ±15¢" },
 ]);
+choices($("holdMs"), "holdMs", [
+  { value: 500, label: "0.5秒" },
+  { value: 1000, label: "1秒" },
+  { value: 1500, label: "1.5秒" },
+  { value: 2000, label: "2秒" },
+]);
 choices($("rounds"), "rounds", [
   { value: 5, label: "5" },
   { value: 10, label: "10" },
@@ -117,6 +129,7 @@ choices($("rounds"), "rounds", [
 checkbox("headphones");
 checkbox("speech");
 checkbox("octaveFree");
+checkbox("slide");
 updateHint();
 
 // --- Session ---
@@ -167,7 +180,7 @@ $("stop").onclick = () => end();
 function begin(s: Settings) {
   $("setup").hidden = true;
   $("practice").hidden = false;
-  $("modeLabel").textContent = MODES[s.mode].label;
+  $("modeLabel").textContent = MODES[s.mode].label + (s.slide ? "・スライド" : "");
   $("zone").style.width = `${(s.tolerance / 100) * 50}%`;
   history.length = 0;
 

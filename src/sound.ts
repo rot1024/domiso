@@ -54,6 +54,11 @@ export class Sound {
     this.tone(1760, at + 0.1, 0.25, 0.15, "sine");
   }
 
+  /** Quiet, high and short so it doesn't disturb singing (and is above the pitch detector's range). */
+  ping(at = this.ctx.currentTime) {
+    this.tone(2637, at, 0.07, 0.06, "sine");
+  }
+
   fail(at = this.ctx.currentTime) {
     this.tone(220, at, 0.3, 0.15, "square");
   }
