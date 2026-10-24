@@ -1,6 +1,6 @@
 import { PitchDetector } from "pitchy";
 import { freqToMidi } from "../theory";
-import { median } from "../pitch";
+import { fixSubharmonic, median } from "../pitch";
 import type { SongNote } from "./song";
 
 /** Analysis frame step in seconds. The contour is stored at this resolution. */
@@ -55,8 +55,11 @@ function detect(samples: Float32Array, sampleRate: number, onProgress?: (ratio: 
   const out: (number | null)[] = new Array(frames).fill(null);
   for (let i = 0; i < frames; i++) {
     if (rms[i] < threshold) continue;
-    const [freq, clarity] = detector.findPitch(samples.subarray(i * hop, i * hop + FRAME), sampleRate);
-    if (clarity >= MIN_CLARITY && freq >= MIN_FREQ && freq <= MAX_FREQ) out[i] = freqToMidi(freq);
+    const frame = samples.subarray(i * hop, i * hop + FRAME);
+    const [freq, clarity] = detector.findPitch(frame, sampleRate);
+    if (clarity >= MIN_CLARITY && freq >= MIN_FREQ && freq <= MAX_FREQ) {
+      out[i] = freqToMidi(fixSubharmonic(frame, sampleRate, freq));
+    }
     if (onProgress && i % 500 === 0) onProgress(i / frames);
   }
   return out;

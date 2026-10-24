@@ -24,9 +24,41 @@ export function analyzeFrame(
   for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
   const rms = Math.sqrt(sum / buf.length);
   if (rms < minRms) return { freq: null, clarity: 0, rms };
-  const [freq, clarity] = detector.findPitch(buf, sampleRate);
-  if (clarity < minClarity || freq < MIN_FREQ || freq > MAX_FREQ) return { freq: null, clarity, rms };
-  return { freq, clarity, rms };
+  const [raw, clarity] = detector.findPitch(buf, sampleRate);
+  if (clarity < minClarity || raw < MIN_FREQ || raw > MAX_FREQ) return { freq: null, clarity, rms };
+  return { freq: fixSubharmonic(buf, sampleRate, raw), clarity, rms };
+}
+
+/** A harmonic this much weaker (dB) than the strongest one is treated as absent. */
+const ABSENT_HARMONIC_DB = 25;
+
+/**
+ * Corrects the detector locking onto a multiple of the true period (reporting an octave or two too low,
+ * or an octave and a fifth too low). On real singing these show up as sudden drops; the reported
+ * fundamental then has next to no energy while a multiple of it carries the voice. Picks the lowest
+ * multiple k·f (k = 1..4) whose energy is within ABSENT_HARMONIC_DB of the strongest one.
+ */
+export function fixSubharmonic(buf: Float32Array, sampleRate: number, freq: number): number {
+  const powers: number[] = [];
+  for (let k = 1; k <= 4 && k * freq <= MAX_FREQ; k++) powers.push(powerAt(buf, sampleRate, k * freq));
+  const max = Math.max(...powers);
+  const k = powers.findIndex((p) => p >= max - ABSENT_HARMONIC_DB) + 1;
+  return k * freq;
+}
+
+/** Power (dB) of one frequency in a Hann-windowed frame, by the Goertzel algorithm. */
+function powerAt(buf: Float32Array, sampleRate: number, freq: number): number {
+  const n = buf.length;
+  const coeff = 2 * Math.cos((2 * Math.PI * freq) / sampleRate);
+  let s1 = 0;
+  let s2 = 0;
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1));
+    const s0 = buf[i] * w + coeff * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return 10 * Math.log10(s1 * s1 + s2 * s2 - coeff * s1 * s2 + 1e-20);
 }
 
 /** Continuously reads the microphone and emits pitch samples. */
