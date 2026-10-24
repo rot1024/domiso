@@ -320,6 +320,44 @@ input[type="range"] {
   margin: 6px 0 10px;
 }
 
+.take {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.take span {
+  flex: 1 1 100%;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.take button {
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+.loop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.loop span {
+  flex: 1;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+#kReplay {
+  margin-bottom: 8px;
+}
+
 .speed {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;

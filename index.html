@@ -120,6 +120,13 @@
       <section class="toggles">
         <label><input type="checkbox" id="showContour" /> お手本の細かい音程の線を表示</label>
         <label><input type="checkbox" id="kOctaveFree" /> オクターブ違いもOK</label>
+        <label><input type="checkbox" id="recordTakes" /> 歌を録音してテイクに残す（リプレイ用）</label>
+      </section>
+
+      <section id="kTakesSection" hidden>
+        <h2>テイク</h2>
+        <p class="hint">テイクはこの端末に保存されます。「保存して削除」でファイルに書き出して端末から消せます（ファイルを開けば戻せます）。</p>
+        <div id="kTakes"></div>
       </section>
 
       <button id="kSing" class="primary" disabled>歌う</button>
@@ -141,6 +148,7 @@
       </div>
       <canvas id="kGraph" class="tall"></canvas>
       <div class="message" id="kResult"></div>
+      <button id="kReplay" class="secondary" hidden>リプレイ（自分の声とお手本を重ねて聴く）</button>
       <div class="speed">
         <button id="kSlower">遅く</button>
         <button id="kSpeed" title="タップで等速に戻す">1.00倍</button>
@@ -151,6 +159,44 @@
         <button id="kPlay" class="primary">一時停止</button>
         <button id="kStop">やめる</button>
       </div>
+    </main>
+
+    <main id="replay" class="screen" hidden>
+      <header class="status">
+        <span id="rTitle"></span>
+        <span id="rTime"></span>
+      </header>
+      <canvas id="rGraph" class="tall"></canvas>
+      <div class="message" id="rMessage"></div>
+      <div class="speed">
+        <button id="rSlower">遅く</button>
+        <button id="rSpeed">1.00倍</button>
+        <button id="rFaster">速く</button>
+      </div>
+      <div class="controls">
+        <button id="rRewind">⏪ 5秒</button>
+        <button id="rPlay" class="primary">再生</button>
+        <button id="rBack">もどる</button>
+      </div>
+      <div class="loop">
+        <button id="rA">A</button>
+        <button id="rB">B</button>
+        <span id="rLoop"></span>
+        <button id="rClear">解除</button>
+      </div>
+      <section class="toggles">
+        <h2>聴く音</h2>
+        <label><input type="checkbox" id="rMine" /> 自分の声</label>
+        <label><input type="checkbox" id="rVoice" /> お手本の声</label>
+        <label><input type="checkbox" id="rInst" /> 伴奏</label>
+        <label><input type="checkbox" id="rMelody" /> ガイドメロディ</label>
+        <label><input type="checkbox" id="rSplit" /> 左右に分ける（左: 自分、右: お手本）</label>
+      </section>
+      <section>
+        <h2>自分の声の位置 <span id="rOffsetLabel"></span></h2>
+        <input type="range" id="rOffset" min="-300" max="300" step="10" />
+        <p class="hint">自分の声がお手本より遅れて聞こえるなら左へ。</p>
+      </section>
     </main>
 
     <script type="module" src="./src/main.ts"></script>

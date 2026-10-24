@@ -9,7 +9,10 @@ import { soundRange } from "./trim";
 import { encodeWav, renderMelody } from "./melody";
 import { melodyToMidi } from "./midi";
 import { KaraokePlayer, MAX_SPEED, MIN_SPEED } from "./player";
+import { initReplay, openReplay } from "./replay";
 import { parseSong, serializeSong, type Song } from "./song";
+import { parseTakeFile, serializeTake, songKey, type Take, type TakePoint } from "./take";
+import { deleteTake, saveTake, takesFor } from "./takes-db";
 import { KaraokeView } from "./view";
 
 /** Audio files the user picked, by file name. */
@@ -45,6 +48,17 @@ let player: KaraokePlayer | null = null;
 let view: KaraokeView | null = null;
 let tracker: PitchTracker | null = null;
 
+/** The take being recorded in the current karaoke session. */
+let recording: {
+  recorder: MediaRecorder;
+  chunks: Blob[];
+  /** AudioContext time at which the recording started. */
+  start: number;
+  points: TakePoint[];
+  done: boolean;
+} | null = null;
+let lastTake: Take | null = null;
+
 export function initKaraoke() {
   checkbox("playInst");
   checkbox("playVoice");
@@ -61,6 +75,16 @@ export function initKaraoke() {
     { value: 15, label: "厳しめ ±15¢" },
   ]);
   checkbox("showContour");
+  checkbox("recordTakes");
+  initReplay({
+    song: () => song,
+    media: mediaFor,
+    back: () => {
+      show("karaokeSetup");
+      void renderTakes();
+    },
+  });
+  $("kReplay").onclick = () => lastTake && void openReplay(lastTake);
   checkbox("octaveFree", $<HTMLInputElement>("kOctaveFree"));
 
   const latency = $<HTMLInputElement>("latency");
@@ -97,7 +121,7 @@ export function initKaraoke() {
 }
 
 function show(id: "setup" | "karaokeSetup" | "karaoke") {
-  for (const s of ["setup", "karaokeSetup", "karaoke"]) $(s).hidden = s !== id;
+  for (const s of ["setup", "karaokeSetup", "karaoke", "replay"]) $(s).hidden = s !== id;
   window.scrollTo(0, 0);
 }
 
@@ -120,9 +144,33 @@ const isSongFile = (f: File) => /\.json$/i.test(f.name);
  */
 async function openFiles(files: File[]) {
   $("kError").textContent = "";
-  const jsons = files.filter(isSongFile);
-  const audios = files.filter((f) => !isSongFile(f));
+  let jsons = files.filter(isSongFile);
+  let audios = files.filter((f) => !isSongFile(f));
   try {
+    // Downloaded takes come back as their .domiso-take.json plus audio.
+    for (const j of [...jsons]) {
+      const t = parseTakeFile(await j.text());
+      if (!t) continue;
+      if (!song || t.songKey !== songKey(song)) throw new Error(`テイク「${j.name}」の曲の解析データを先に開いてください`);
+      const audio = audios.find((f) => f.name === t.audioFile);
+      if (!audio) throw new Error(`テイクの音声「${t.audioFile}」も一緒に選んでください`);
+      await saveTake({
+        id: crypto.randomUUID(),
+        songKey: t.songKey,
+        title: t.title,
+        created: t.created,
+        mime: t.mime,
+        audio,
+        points: t.points,
+        score: t.score,
+      });
+      jsons = jsons.filter((x) => x !== j);
+      audios = audios.filter((x) => x !== audio);
+    }
+    if (!jsons.length && !audios.length) {
+      await renderTakes();
+      return;
+    }
     if (jsons.length > 1) throw new Error("解析データは1つだけ選んでください");
     if (jsons.length) {
       const opened = parseSong(await jsons[0].text());
@@ -145,6 +193,7 @@ async function openFiles(files: File[]) {
     $("kError").textContent = e instanceof Error ? e.message : String(e);
   }
   updateButtons();
+  await renderTakes();
 }
 
 /** File names a song can play: the reference voice and the backing track. */
@@ -241,6 +290,8 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
 
+let sessionCtx: AudioContext;
+
 async function sing() {
   if (!song) return;
   $("kError").textContent = "";
@@ -251,6 +302,7 @@ async function sing() {
   try {
     const a = await openAudio();
     tracker = a.tracker;
+    sessionCtx = a.ctx;
     await Promise.all([voice, inst, original].map((m) => m?.unlocked));
     const tracks = {
       voice: voice?.el ?? null,
@@ -280,6 +332,7 @@ async function sing() {
   $("kResult").textContent = "";
   show("karaoke");
   player.onEnd = showResult;
+  startRecording(sessionCtx);
   tracker.onSample = (s) => {
     player?.handleSample(s);
     readout(s.freq);
@@ -353,6 +406,7 @@ function updatePlayButton() {
 
 function showResult() {
   if (!player) return;
+  void finishTake();
   const r = player.result();
   let text = `スコア ${r.score}点・音符 ${r.notesHit}/${r.notesTotal}`;
   if (r.bias !== null && Math.abs(r.bias) >= 8) {
@@ -363,12 +417,107 @@ function showResult() {
 }
 
 function endSinging() {
+  void finishTake();
   player?.stop();
   player = null;
   view = null;
   tracker?.stop();
   keepAwake(false);
   show("karaokeSetup");
+}
+
+/** Records your voice alongside the pitch, so the take can be replayed against the song. */
+function startRecording(ctx: AudioContext) {
+  recording = null;
+  $("kReplay").hidden = true;
+  if (!prefs.recordTakes || !tracker || !player || typeof MediaRecorder === "undefined") return;
+  const recorder = new MediaRecorder(tracker.stream);
+  const rec = { recorder, chunks: [] as Blob[], start: ctx.currentTime, points: [] as TakePoint[], done: false };
+  recorder.ondataavailable = (e) => {
+    if (e.data.size) rec.chunks.push(e.data);
+  };
+  recorder.onstart = () => (rec.start = ctx.currentTime);
+  recorder.start(1000);
+  // The detector reports a frame about 20 ms after its middle; the recording has it at the real time.
+  player.onPoint = (p) => rec.points.push({ t: p.t, m: p.midi, r: p.ctxTime - 0.02 - rec.start });
+  recording = rec;
+}
+
+/** Stops the recording and keeps it as a take if anything was sung. */
+async function finishTake() {
+  const rec = recording;
+  if (!rec || rec.done || !song) return;
+  rec.done = true;
+  // Scored now, over what was actually sung: the player may be gone once the recorder has stopped.
+  const last = rec.points.at(-1);
+  const score = (last && player?.rangeScore(0, last.t)) ?? 0;
+  const stopped = new Promise<void>((r) => (rec.recorder.onstop = () => r()));
+  if (rec.recorder.state !== "inactive") rec.recorder.stop();
+  await stopped;
+  const voiced = rec.points.filter((p) => p.m !== null).length * 0.025;
+  if (voiced < 2 || !rec.chunks.length) return;
+  const mime = rec.recorder.mimeType || rec.chunks[0].type;
+  const take: Take = {
+    id: crypto.randomUUID(),
+    songKey: songKey(song),
+    title: song.title,
+    created: new Date().toISOString(),
+    mime,
+    audio: new Blob(rec.chunks, { type: mime }),
+    points: rec.points,
+    score,
+  };
+  try {
+    await saveTake(take);
+    lastTake = take;
+    $("kReplay").hidden = false;
+  } catch (e) {
+    $("kResult").textContent += `（テイクを保存できませんでした: ${e}）`;
+  }
+  await renderTakes();
+}
+
+/** Lists this song's takes, newest first, with replay / download / remove. */
+async function renderTakes() {
+  const list = $("kTakes");
+  const takes = song ? await takesFor(songKey(song)).catch(() => [] as Take[]) : [];
+  $("kTakesSection").hidden = !takes.length;
+  list.replaceChildren(
+    ...takes.map((t) => {
+      const row = document.createElement("div");
+      row.className = "take";
+      const label = document.createElement("span");
+      label.textContent = `${new Date(t.created).toLocaleString()}・${t.score}点・${(t.audio.size / 1e6).toFixed(1)}MB`;
+      const button = (text: string, f: () => void) => {
+        const b = document.createElement("button");
+        b.textContent = text;
+        b.onclick = f;
+        return b;
+      };
+      row.append(
+        label,
+        button("リプレイ", () => void openReplay(t)),
+        button("保存", () => downloadTake(t)),
+        button("保存して削除", () => {
+          downloadTake(t);
+          // Give the downloads a moment to start before the data goes.
+          setTimeout(() => void deleteTake(t.id).then(renderTakes), 1500);
+        }),
+        button("削除", () => {
+          if (confirm("このテイクを削除しますか？（元に戻せません）")) void deleteTake(t.id).then(renderTakes);
+        }),
+      );
+      return row;
+    }),
+  );
+}
+
+/** Downloads a take as its audio plus a .domiso-take.json that can be opened again later. */
+function downloadTake(t: Take) {
+  const { json, audioFile } = serializeTake(t);
+  download(t.audio, audioFile);
+  const jsonName = audioFile.replace(/\.[^.]+$/, ".domiso-take.json");
+  setTimeout(() => download(new Blob([json], { type: "application/json" }), jsonName), 300);
 }
 
 function formatTime(sec: number): string {

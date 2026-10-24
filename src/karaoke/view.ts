@@ -17,6 +17,12 @@ const MAX_JUMP = 2.5;
 /** Scrolling karaoke view: upcoming bars flow in from the right; your voice is drawn up to "now". */
 export class KaraokeView {
   private center: number | null = null;
+  private lastNow = 0;
+
+  /** Song time under a horizontal position (0 = left edge, 1 = right edge) as last drawn. */
+  timeAtX(fraction: number): number {
+    return this.lastNow + (fraction - NOW_X) * (PAST + FUTURE);
+  }
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -28,6 +34,7 @@ export class KaraokeView {
     const { g, w, h, dpr } = prepareCanvas(this.canvas);
     const p = this.player;
     const now = p.position;
+    this.lastNow = now;
     const x = (t: number) => w * NOW_X + ((t - now) / (PAST + FUTURE)) * w;
 
     // Center on the melody around "now" (biased toward what's coming) and move smoothly.

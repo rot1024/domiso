@@ -7,12 +7,18 @@ let tracker: PitchTracker | null = null;
 
 /** Must run inside a tap: iOS only allows audio and speech started from a user gesture. */
 export async function openAudio(): Promise<{ ctx: AudioContext; sound: Sound; tracker: PitchTracker }> {
+  const { ctx, sound } = await openPlayback();
+  tracker ??= await PitchTracker.open(ctx);
+  return { ctx, sound, tracker };
+}
+
+/** Audio output only, for screens that don't listen (no microphone prompt). */
+export async function openPlayback(): Promise<{ ctx: AudioContext; sound: Sound }> {
   ctx ??= new AudioContext();
   await ctx.resume();
   sound ??= new Sound(ctx);
   sound.unlockSpeech();
-  tracker ??= await PitchTracker.open(ctx);
-  return { ctx, sound, tracker };
+  return { ctx, sound };
 }
 
 let wakeLock: WakeLockSentinel | null = null;

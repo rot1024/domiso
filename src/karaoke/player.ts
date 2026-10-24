@@ -13,6 +13,10 @@ export interface Playback {
   melody: boolean;
   /** The original song (vocals and backing together). */
   original: boolean;
+  /** Your own recorded take (replay). */
+  mine?: boolean;
+  /** Put your take on the left and the reference voice on the right, to hear the difference. */
+  split?: boolean;
 }
 
 /**
@@ -28,12 +32,27 @@ export interface Tracks {
   inst: HTMLAudioElement | null;
   /** The original song, on the same timeline. */
   original: HTMLAudioElement | null;
+  /** Your own take rendered onto the song timeline (replay only). */
+  mine?: HTMLAudioElement | null;
+  /** Where song time 0 is in the take, to fine-tune its alignment. */
+  mineOffset?: number;
+  /** Song seconds per second of the take (the speed it was sung at). */
+  mineSpeed?: number;
+}
+
+/** One pitch sample of the singer, for recording a take: song time, raw MIDI pitch, AudioContext time. */
+export interface SungPoint {
+  t: number;
+  midi: number | null;
+  ctxTime: number;
 }
 
 interface ActiveTrack {
   el: HTMLAudioElement;
   /** Where song time 0 is in this element's media. */
   offset: number;
+  /** Media seconds per song second (1 except for a take sung at another speed). */
+  rate: number;
 }
 
 /** Elements further than this from the master clock are moved back in line. */
@@ -90,6 +109,10 @@ export class KaraokePlayer {
   /** The singer's pitch over song time. */
   trace: { t: number; midi: number | null }[] = [];
   onEnd: () => void = () => {};
+  /** Called for every scored pitch sample (raw pitch, before any octave folding). */
+  onPoint: (p: SungPoint) => void = () => {};
+  /** End of the range being played by playRange, and what to do there. */
+  private range: { end: number; done: () => void } | null = null;
 
   /** Song time `pos` was at AudioContext time `ctx`; position runs on from there at `speed`. */
   private anchor = { ctx: 0, pos: 0 };
@@ -119,20 +142,26 @@ export class KaraokePlayer {
     const originalOn = play.original && !!tracks.original;
     const instOn = play.inst && !!tracks.inst && !originalOn;
     const voiceOn = play.voice && !!tracks.voice && !originalOn;
-    if (originalOn) this.addTrack(tracks.original!, 0, 1);
+    const split = !!play.split;
+    if (originalOn) this.addTrack(tracks.original!, 0, 1, split ? 1 : 0);
     if (instOn) this.addTrack(tracks.inst!, 0, 1);
-    if (voiceOn) this.addTrack(tracks.voice!, tracks.voiceOffset, instOn ? VOICE_GAIN_UNDER_INST : 1);
+    if (voiceOn) this.addTrack(tracks.voice!, tracks.voiceOffset, instOn ? VOICE_GAIN_UNDER_INST : 1, split ? 1 : 0);
+    if (play.mine && tracks.mine) {
+      this.addTrack(tracks.mine, tracks.mineOffset ?? 0, 1, split ? -1 : 0, 1 / (tracks.mineSpeed ?? 1));
+    }
     // Without the reference recording, the guide melody carries the tune instead.
     this.melodyOn = play.melody || (play.voice && !tracks.voice && !originalOn);
   }
 
-  private addTrack(el: HTMLAudioElement, offset: number, gain: number) {
+  private addTrack(el: HTMLAudioElement, offset: number, gain: number, pan = 0, rate = 1) {
     // Routed through a gain node: element.volume is read-only on iOS.
     const g = this.ctx.createGain();
     g.gain.value = gain;
-    this.ctx.createMediaElementSource(el).connect(g).connect(this.ctx.destination);
+    const p = this.ctx.createStereoPanner();
+    p.pan.value = pan;
+    this.ctx.createMediaElementSource(el).connect(g).connect(p).connect(this.ctx.destination);
     el.preservesPitch = true;
-    this.active.push({ el, offset });
+    this.active.push({ el, offset, rate });
   }
 
   get speed(): number {
@@ -144,7 +173,7 @@ export class KaraokePlayer {
     const s = Math.max(MIN_SPEED, Math.min(MAX_SPEED, v));
     if (this.playing) this.anchor = { ctx: this.ctx.currentTime, pos: this.position };
     this.speedValue = s;
-    for (const t of this.active) t.el.playbackRate = s;
+    for (const t of this.active) t.el.playbackRate = s * t.rate;
     if (this.playing && this.melodyOut) {
       this.startMelody();
       this.tick();
@@ -180,8 +209,8 @@ export class KaraokePlayer {
     this.playing = true;
     this.anchor = { ctx: this.ctx.currentTime, pos: this.pausedAt };
     for (const t of this.active) {
-      t.el.playbackRate = this.speedValue;
-      t.el.currentTime = t.offset + this.pausedAt;
+      t.el.playbackRate = this.speedValue * t.rate;
+      t.el.currentTime = t.offset + this.pausedAt * t.rate;
       void t.el.play();
     }
     if (this.melodyOn) this.startMelody();
@@ -218,7 +247,29 @@ export class KaraokePlayer {
   }
 
   stop() {
+    this.range = null;
     this.pause();
+  }
+
+  /**
+   * Plays song time [from, to) and calls `done` at the end (paused there). Scores inside the range are
+   * cleared first, so each attempt is scored on its own.
+   */
+  playRange(from: number, to: number, done: () => void) {
+    this.pause();
+    this.range = null;
+    this.clearScores(from, to);
+    this.pausedAt = Math.max(0, Math.min(from, this.duration));
+    this.range = { end: Math.min(to, this.duration), done };
+    this.play();
+  }
+
+  /** Forgets scores and sung pitch inside [from, to). */
+  clearScores(from: number, to: number) {
+    this.trace = this.trace.filter((p) => p.t < from || p.t >= to);
+    this.notes.forEach((n, i) => {
+      if (n.end > from && n.start < to) this.stats[i] = { total: 0, hit: 0, devSum: 0, devCount: 0 };
+    });
   }
 
   private stopOutput() {
@@ -232,6 +283,14 @@ export class KaraokePlayer {
   private tick() {
     this.syncToMedia();
     const pos = this.position;
+    if (this.range && pos >= this.range.end) {
+      const { end, done } = this.range;
+      this.range = null;
+      this.pause();
+      this.pausedAt = end;
+      done();
+      return;
+    }
     if (pos >= this.duration) {
       this.pause();
       this.pausedAt = this.duration;
@@ -248,10 +307,11 @@ export class KaraokePlayer {
   private syncToMedia() {
     const master = this.active[0];
     if (!master || !this.playing) return;
-    const mediaPos = master.el.currentTime - master.offset;
+    const songPos = (t: ActiveTrack) => (t.el.currentTime - t.offset) / t.rate;
+    const mediaPos = songPos(master);
     if (Math.abs(mediaPos - this.position) > 0.03) this.anchor = { ctx: this.ctx.currentTime, pos: mediaPos };
     for (const t of this.active.slice(1)) {
-      if (Math.abs(t.el.currentTime - t.offset - mediaPos) > RESYNC_SEC) t.el.currentTime = t.offset + mediaPos;
+      if (Math.abs(songPos(t) - mediaPos) > RESYNC_SEC) t.el.currentTime = t.offset + mediaPos * t.rate;
     }
   }
 
@@ -297,15 +357,20 @@ export class KaraokePlayer {
     // much song time.
     const t = this.position - (this.ctx.currentTime - s.time + this.latency) * this.speedValue;
     if (t < 0) return;
-    const i = noteAt(this.notes, t);
-    let midi = s.freq === null ? null : freqToMidi(s.freq);
+    this.onPoint({ t, midi: s.freq === null ? null : freqToMidi(s.freq), ctxTime: s.time });
+    this.score(t, s.freq);
+  }
 
+  /** Scores one pitch sample at song time `t` and adds it to the trace. */
+  private score(t: number, freq: number | null) {
+    const i = noteAt(this.notes, t);
+    let midi = freq === null ? null : freqToMidi(freq);
     if (i >= 0) {
       const target = this.notes[i].midi;
       const st = this.stats[i];
       st.total++;
-      if (s.freq !== null) {
-        const dev = centsOff(s.freq, target, this.opts.octaveFree);
+      if (freq !== null) {
+        const dev = centsOff(freq, target, this.opts.octaveFree);
         if (Math.abs(dev) <= this.opts.tolerance) st.hit++;
         if (Math.abs(dev) <= 150) {
           st.devSum += dev;
@@ -316,6 +381,40 @@ export class KaraokePlayer {
       }
     }
     this.trace.push({ t, midi });
+  }
+
+  /** Replays a recorded take's pitch through the scoring, for replay mode. */
+  loadTrace(points: { t: number; midi: number | null }[]) {
+    this.trace = [];
+    this.stats.forEach((_, i) => (this.stats[i] = { total: 0, hit: 0, devSum: 0, devCount: 0 }));
+    for (const p of points) this.score(p.t, p.midi === null ? null : midiToFreq(p.midi));
+  }
+
+  /** Duration-weighted share in tune (0-100) of the notes inside [from, to), or null if none were sung. */
+  rangeScore(from: number, to: number): number | null {
+    let weighted = 0;
+    let total = 0;
+    let any = false;
+    this.notes.forEach((n, i) => {
+      if (n.start < from || n.start >= to) return;
+      const st = this.stats[i];
+      if (st.total) any = true;
+      weighted += (st.total ? st.hit / st.total : 0) * (n.end - n.start);
+      total += n.end - n.start;
+    });
+    return any && total ? Math.round((weighted / total) * 100) : null;
+  }
+
+  /** The note in [from, to) sung worst, with its mean deviation in cents (null if never near it). */
+  worstNote(from: number, to: number): { index: number; ratio: number; bias: number | null } | null {
+    let worst: { index: number; ratio: number; bias: number | null } | null = null;
+    this.notes.forEach((n, i) => {
+      if (n.start < from || n.start >= to) return;
+      const st = this.stats[i];
+      const ratio = st.total ? st.hit / st.total : 0;
+      if (!worst || ratio < worst.ratio) worst = { index: i, ratio, bias: st.devCount ? st.devSum / st.devCount : null };
+    });
+    return worst;
   }
 
   /** Deviation in cents from the note due at song time `t`, or null. */

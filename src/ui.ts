@@ -19,6 +19,16 @@ export interface Prefs {
   playOriginal: boolean;
   /** Karaoke: playback speed (pitch is kept). */
   speed: number;
+  /** Karaoke: record your voice while singing, for replay. */
+  recordTakes: boolean;
+  /** Replay mixer, speed and alignment of your take. */
+  rMine: boolean;
+  rVoice: boolean;
+  rInst: boolean;
+  rMelody: boolean;
+  rSplit: boolean;
+  rSpeed: number;
+  rOffsetMs: number;
   /** Karaoke: shift the reference melody by octaves. */
   octave: number;
   /** Karaoke: extra delay compensation in ms on top of what the browser reports. */
@@ -44,6 +54,14 @@ export const prefs: Prefs = {
   playMelody: false,
   playOriginal: false,
   speed: 1,
+  recordTakes: true,
+  rMine: true,
+  rVoice: true,
+  rInst: false,
+  rMelody: false,
+  rSplit: false,
+  rSpeed: 1,
+  rOffsetMs: 0,
   octave: 0,
   latencyMs: 0,
   showContour: true,

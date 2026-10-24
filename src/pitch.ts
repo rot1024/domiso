@@ -74,7 +74,7 @@ export class PitchTracker {
 
   private constructor(
     private ctx: AudioContext,
-    private stream: MediaStream,
+    readonly stream: MediaStream,
   ) {
     const source = ctx.createMediaStreamSource(stream);
     this.analyser = ctx.createAnalyser();
