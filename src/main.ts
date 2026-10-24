@@ -1,92 +1,11 @@
-import { PitchTracker, type PitchSample } from "./pitch";
-import { Sound } from "./sound";
+import { openAudio, keepAwake } from "./audio";
+import { initKaraoke } from "./karaoke/screen";
+import type { PitchSample, PitchTracker } from "./pitch";
+import type { Sound } from "./sound";
 import { Tuner } from "./tuner";
 import { centsOff, DEGREE_LABELS, freqToMidi, midiName, midiToFreq, VOICE_PRESETS } from "./theory";
 import { AID_LABELS, MODES, Trainer, type Mode, type Settings, type TrainerState } from "./trainer";
-
-const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-
-interface Prefs {
-  voice: string;
-  mode: Mode;
-  tolerance: number;
-  holdMs: number;
-  rounds: number;
-  headphones: boolean;
-  speech: boolean;
-  octaveFree: boolean;
-  slide: boolean;
-}
-
-const PREFS_KEY = "domiso:prefs";
-const prefs: Prefs = {
-  voice: "high-male",
-  mode: "unison",
-  tolerance: 30,
-  holdMs: 1000,
-  rounds: 10,
-  headphones: true,
-  speech: true,
-  octaveFree: false,
-  slide: false,
-  ...loadPrefs(),
-};
-
-function loadPrefs(): Partial<Prefs> {
-  try {
-    return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
-function savePrefs() {
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-  } catch {
-    // Storage may be unavailable (private mode); preferences just won't persist.
-  }
-}
-
-/** Renders a row of single-choice buttons bound to a preference. */
-function choices<K extends keyof Prefs>(
-  container: HTMLElement,
-  key: K,
-  options: { value: Prefs[K]; label: string; sub?: string }[],
-) {
-  const render = () => {
-    container.replaceChildren(
-      ...options.map((o) => {
-        const b = document.createElement("button");
-        b.textContent = o.label;
-        if (o.sub) {
-          const s = document.createElement("small");
-          s.textContent = o.sub;
-          b.append(s);
-        }
-        b.classList.toggle("selected", prefs[key] === o.value);
-        b.onclick = () => {
-          prefs[key] = o.value;
-          savePrefs();
-          render();
-          updateHint();
-        };
-        return b;
-      }),
-    );
-  };
-  render();
-}
-
-function checkbox(key: "headphones" | "speech" | "octaveFree" | "slide") {
-  const el = $<HTMLInputElement>(key);
-  el.checked = prefs[key];
-  el.onchange = () => {
-    prefs[key] = el.checked;
-    savePrefs();
-    updateHint();
-  };
-}
+import { $, checkbox, choices, errorText, prefs, prefsListeners } from "./ui";
 
 function updateHint() {
   const hint =
@@ -131,7 +50,9 @@ checkbox("headphones");
 checkbox("speech");
 checkbox("octaveFree");
 checkbox("slide");
+prefsListeners.push(updateHint);
 updateHint();
+initKaraoke();
 
 // --- Session ---
 
@@ -139,7 +60,6 @@ let ctx: AudioContext | null = null;
 let tracker: PitchTracker | null = null;
 let sound: Sound | null = null;
 let trainer: Trainer | null = null;
-let wakeLock: WakeLockSentinel | null = null;
 let settings: Settings | null = null;
 const history: { time: number; midi: number | null }[] = [];
 
@@ -148,7 +68,7 @@ $("start").onclick = async () => {
   $("error").textContent = "";
   startBtn.disabled = true;
   try {
-    await openAudio();
+    ({ ctx, sound, tracker } = await openAudio());
 
     const home = VOICE_PRESETS.find((p) => p.id === prefs.voice)!.home;
     startBtn.textContent = "ピアノ読み込み中…";
@@ -160,29 +80,12 @@ $("start").onclick = async () => {
     settings = { home, ...prefs };
     begin(settings);
   } catch (e) {
-    showError(e);
+    $("error").textContent = errorText(e);
   } finally {
     startBtn.disabled = false;
     startBtn.textContent = "スタート";
   }
 };
-
-/** Must run inside a tap: iOS only allows audio and speech started from a user gesture. */
-async function openAudio() {
-  ctx ??= new AudioContext();
-  await ctx.resume();
-  sound ??= new Sound(ctx);
-  sound.unlockSpeech();
-  tracker ??= await PitchTracker.open(ctx);
-}
-
-function showError(e: unknown) {
-  console.error(e);
-  $("error").textContent =
-    e instanceof DOMException && e.name === "NotAllowedError"
-      ? "マイクの使用を許可してください。"
-      : `開始できませんでした: ${e}`;
-}
 
 // --- Tuner ---
 
@@ -191,9 +94,9 @@ let tuner: Tuner | null = null;
 $("openTuner").onclick = async () => {
   $("error").textContent = "";
   try {
-    await openAudio();
+    ({ ctx, sound, tracker } = await openAudio());
   } catch (e) {
-    showError(e);
+    $("error").textContent = errorText(e);
     return;
   }
   tuner = new Tuner(
@@ -211,15 +114,14 @@ $("openTuner").onclick = async () => {
   tuner.start();
   tracker!.onSample = (s) => tuner?.push(s);
   tracker!.start();
-  void requestWakeLock();
+  keepAwake(true);
 };
 
 $("closeTuner").onclick = () => {
   tuner?.stop();
   tuner = null;
   tracker?.stop();
-  void wakeLock?.release();
-  wakeLock = null;
+  keepAwake(false);
   $("tuner").hidden = true;
   $("setup").hidden = false;
 };
@@ -238,7 +140,7 @@ function begin(s: Settings) {
   renderState(trainer.state);
   tracker!.onSample = onSample;
   tracker!.start();
-  void requestWakeLock();
+  keepAwake(true);
   requestAnimationFrame(draw);
   void trainer.run().then(() => {
     if (trainer?.state.phase === "done") $<HTMLButtonElement>("stop").textContent = "もどる";
@@ -249,25 +151,11 @@ function end() {
   trainer?.stop();
   trainer = null;
   tracker?.stop();
-  void wakeLock?.release();
-  wakeLock = null;
+  keepAwake(false);
   $("practice").hidden = true;
   $("setup").hidden = false;
   $("stop").textContent = "やめる";
 }
-
-async function requestWakeLock() {
-  try {
-    wakeLock = await navigator.wakeLock?.request("screen");
-  } catch {
-    // Not supported or denied; the session still works while the screen stays on.
-  }
-}
-
-document.addEventListener("visibilitychange", () => {
-  // The lock is released whenever the page is hidden; take it again on return.
-  if (document.visibilityState === "visible" && (trainer || tuner)) void requestWakeLock();
-});
 
 function onSample(s: PitchSample) {
   trainer?.handleSample(s);

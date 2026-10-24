@@ -284,6 +284,59 @@ canvas.tall {
   font-variant-numeric: tabular-nums;
 }
 
+.files {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.file-btn {
+  display: block;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 8px;
+  cursor: pointer;
+}
+
+.kstatus {
+  font-size: 0.9rem;
+  white-space: pre-line;
+  min-height: 2.6em;
+}
+
+input[type="range"] {
+  width: 100%;
+}
+
+#kNote {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+#kNote.idle {
+  opacity: 0.35;
+}
+
+#karaoke .message {
+  min-height: 1.5em;
+  margin: 6px 0 10px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  gap: 8px;
+}
+
+.controls button.primary {
+  padding: 14px;
+  font-size: 1rem;
+}
+
 #stop,
 #closeTuner {
   width: 100%;

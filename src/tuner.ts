@@ -1,8 +1,7 @@
 import type { PitchSample } from "./pitch";
 import { median } from "./pitch";
+import { drawSemitoneGrid, prepareCanvas, solfege } from "./graph";
 import { freqToMidi, midiName } from "./theory";
-
-const SOLFEGE = ["ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "ラ#", "シ"];
 const GRAPH_SECONDS = 8;
 /** Semitones visible above and below the center of the graph. */
 const HALF_SPAN = 6;
@@ -50,7 +49,7 @@ export class Tuner {
     }
     const nearest = Math.round(midi);
     const off = (midi - nearest) * 100;
-    note.textContent = SOLFEGE[((nearest % 12) + 12) % 12];
+    note.textContent = solfege(nearest);
     note.classList.remove("idle");
     const rounded = Math.round(off);
     cents.textContent = `${midiName(nearest)}  ${rounded === 0 ? "±" : rounded > 0 ? "+" : "−"}${Math.abs(rounded)}¢`;
@@ -61,16 +60,7 @@ export class Tuner {
 
   private draw() {
     if (!this.running) return;
-    const { canvas } = this.els;
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth * dpr;
-    const h = canvas.clientHeight * dpr;
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-    }
-    const g = canvas.getContext("2d")!;
-    g.clearRect(0, 0, w, h);
+    const { g, w, h, dpr } = prepareCanvas(this.els.canvas);
 
     // Follow the voice slowly so the grid doesn't jump with every wobble.
     const recent = this.history
@@ -84,21 +74,7 @@ export class Tuner {
     const lo = center - HALF_SPAN;
     const y = (midi: number) => h - ((midi - lo) / (HALF_SPAN * 2)) * h;
 
-    g.font = `${12 * dpr}px system-ui`;
-    for (let m = Math.ceil(lo); m <= lo + HALF_SPAN * 2; m++) {
-      const pc = ((m % 12) + 12) % 12;
-      const natural = ![1, 3, 6, 8, 10].includes(pc);
-      g.strokeStyle = pc === 0 ? "rgba(255,255,255,0.35)" : natural ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)";
-      g.lineWidth = dpr;
-      g.beginPath();
-      g.moveTo(0, y(m));
-      g.lineTo(w, y(m));
-      g.stroke();
-      if (natural) {
-        g.fillStyle = "#8b90a0";
-        g.fillText(`${SOLFEGE[pc]} ${midiName(m)}`, 6 * dpr, y(m) - 3 * dpr);
-      }
-    }
+    drawSemitoneGrid(g, w, y, lo, lo + HALF_SPAN * 2, dpr);
 
     // Each segment is colored by whether that moment was in tune with its nearest note.
     g.lineWidth = 3 * dpr;

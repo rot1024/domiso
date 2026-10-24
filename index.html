@@ -46,6 +46,7 @@
       <p class="hint" id="hint"></p>
       <button id="start" class="primary">スタート</button>
       <button id="openTuner" class="secondary">チューナー</button>
+      <button id="openKaraoke" class="secondary">カラオケ</button>
       <p class="error" id="error"></p>
     </main>
 
@@ -81,6 +82,68 @@
       </div>
       <canvas id="tunerGraph" class="tall"></canvas>
       <button id="closeTuner">もどる</button>
+    </main>
+
+    <main id="karaokeSetup" class="screen" hidden>
+      <h1>カラオケ</h1>
+      <p class="hint">声だけの音声（先生の手本の録音、アカペラなど）から音程のバーを作り、それに合わせて歌います。</p>
+
+      <div class="files">
+        <label class="file-btn">
+          <input type="file" id="audioFile" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg" hidden />
+          音声ファイルを選ぶ
+        </label>
+        <label class="file-btn">
+          <input type="file" id="songFile" accept=".json,application/json" hidden />
+          解析データを開く
+        </label>
+      </div>
+      <p class="kstatus" id="kStatus">音声ファイルを選ぶと自動で解析します。</p>
+
+      <section>
+        <h2>流す音</h2>
+        <div class="seg" id="guide"></div>
+      </section>
+      <section>
+        <h2>オクターブ</h2>
+        <div class="seg" id="octave"></div>
+      </section>
+      <section>
+        <h2>判定</h2>
+        <div class="seg" id="kTolerance"></div>
+      </section>
+      <section>
+        <h2>遅延補正 <span id="latencyLabel"></span></h2>
+        <input type="range" id="latency" min="-100" max="300" step="10" />
+        <p class="hint">自分の線がバーより右（遅れ）にずれるなら増やします。Bluetooth イヤホンでは 150〜250ms 程度。</p>
+      </section>
+      <section class="toggles">
+        <label><input type="checkbox" id="showContour" /> お手本の細かい音程の線を表示</label>
+        <label><input type="checkbox" id="kOctaveFree" /> オクターブ違いもOK</label>
+      </section>
+
+      <button id="kSing" class="primary" disabled>歌う</button>
+      <button id="kSave" class="secondary" disabled>解析データを保存</button>
+      <button id="kBack" class="secondary">もどる</button>
+      <p class="error" id="kError"></p>
+    </main>
+
+    <main id="karaoke" class="screen" hidden>
+      <header class="status">
+        <span id="kTitle"></span>
+        <span id="kTime"></span>
+      </header>
+      <div class="tuner-note">
+        <div id="kNote" class="idle">–</div>
+        <div id="kCents" class="tuner-cents"></div>
+      </div>
+      <canvas id="kGraph" class="tall"></canvas>
+      <div class="message" id="kResult"></div>
+      <div class="controls">
+        <button id="kRewind">⏪ 5秒</button>
+        <button id="kPlay" class="primary">一時停止</button>
+        <button id="kStop">やめる</button>
+      </div>
     </main>
 
     <script type="module" src="./src/main.ts"></script>
