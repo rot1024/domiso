@@ -5,13 +5,14 @@
 // 1. Separates the vocals with an AI model (audio-separator), and the instrumental too unless --inst is given
 // 2. With --inst, aligns the official instrumental to the song and uses it as the backing track
 // 3. Analyzes the vocals into semitone bars with the same code the app uses
-// 4. Writes <title>.domiso.json plus vocals and instrumental as AAC (.m4a) into the output directory
+// 4. Writes <title>.domiso.json, vocals and instrumental as AAC (.m4a), and the guide melody as MIDI
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { analyze, HOP } from "../src/karaoke/analyze";
+import { melodyToMidi } from "../src/karaoke/midi";
 import { serializeSong, type Song } from "../src/karaoke/song";
 import { alignmentLag } from "./align";
 
@@ -113,6 +114,8 @@ function main() {
     };
     const jsonFile = `${title}.domiso.json`;
     writeFileSync(join(outDir, jsonFile), serializeSong(song));
+    const midiFile = `${title}.guide.mid`;
+    writeFileSync(join(outDir, midiFile), melodyToMidi(result.notes, title));
 
     const voiced = result.contour.filter((m) => m !== null).length * HOP;
     console.log(`
@@ -120,7 +123,8 @@ function main() {
   ${jsonFile}  音符 ${result.notes.length} 個・声 ${voiced.toFixed(0)}秒 / ${song.duration.toFixed(0)}秒・全体のずれ ${result.offsetCents}¢
   ${vocalsFile}
   ${instFile}${values.inst ? "（公式インスト）" : "（AI 分離）"}
-3つのファイルを domiso のカラオケで「ファイルを開く」からまとめて選んでください。`);
+  ${midiFile}（ガイドメロディ。DAW などで使えます）
+.domiso.json と 2つの .m4a を、domiso のカラオケの「ファイルを開く」からまとめて選んでください。`);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

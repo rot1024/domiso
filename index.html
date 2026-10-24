@@ -97,9 +97,11 @@
       </label>
       <p class="kstatus" id="kStatus"></p>
 
-      <section>
+      <section class="toggles">
         <h2>流す音</h2>
-        <div class="seg" id="guide"></div>
+        <label><input type="checkbox" id="playInst" /> 伴奏</label>
+        <label><input type="checkbox" id="playVoice" /> お手本の声</label>
+        <label><input type="checkbox" id="playMelody" /> ガイドメロディ</label>
       </section>
       <section>
         <h2>オクターブ</h2>
@@ -121,6 +123,7 @@
 
       <button id="kSing" class="primary" disabled>歌う</button>
       <button id="kSave" class="secondary" disabled>解析データを保存</button>
+      <button id="kMidi" class="secondary" disabled>ガイドメロディを保存（MIDI）</button>
       <button id="kBack" class="secondary">もどる</button>
       <p class="error" id="kError"></p>
     </main>

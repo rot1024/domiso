@@ -1,4 +1,3 @@
-import type { Guide } from "./karaoke/player";
 import type { Mode } from "./trainer";
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -14,7 +13,9 @@ export interface Prefs {
   octaveFree: boolean;
   slide: boolean;
   /** Karaoke: what plays alongside you. */
-  guide: Guide;
+  playInst: boolean;
+  playVoice: boolean;
+  playMelody: boolean;
   /** Karaoke: shift the reference melody by octaves. */
   octave: number;
   /** Karaoke: extra delay compensation in ms on top of what the browser reports. */
@@ -35,7 +36,9 @@ export const prefs: Prefs = {
   speech: true,
   octaveFree: false,
   slide: false,
-  guide: "both",
+  playInst: true,
+  playVoice: true,
+  playMelody: false,
   octave: 0,
   latencyMs: 0,
   showContour: true,

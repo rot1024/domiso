@@ -5,6 +5,7 @@ import { midiName } from "../theory";
 import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs } from "../ui";
 import { HOP } from "./analyze";
 import { analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
+import { melodyToMidi } from "./midi";
 import { KaraokePlayer } from "./player";
 import { parseSong, serializeSong, type Song } from "./song";
 import { KaraokeView } from "./view";
@@ -20,13 +21,9 @@ let view: KaraokeView | null = null;
 let tracker: PitchTracker | null = null;
 
 export function initKaraoke() {
-  choices($("guide"), "guide", [
-    { value: "both", label: "伴奏+声" },
-    { value: "inst", label: "伴奏" },
-    { value: "voice", label: "声" },
-    { value: "tone", label: "ガイド音" },
-    { value: "none", label: "なし" },
-  ]);
+  checkbox("playInst");
+  checkbox("playVoice");
+  checkbox("playMelody");
   choices($("octave"), "octave", [
     { value: -1, label: "1つ下" },
     { value: 0, label: "そのまま" },
@@ -61,6 +58,7 @@ export function initKaraoke() {
     if (files.length) void openFiles(files);
   };
   $("kSave").onclick = save;
+  $("kMidi").onclick = saveMidi;
   $("kSing").onclick = () => void sing();
   $("kPlay").onclick = togglePlay;
   $("kRewind").onclick = () => player?.seek(player.position - 5);
@@ -79,6 +77,7 @@ function status(text: string) {
 function updateButtons() {
   $<HTMLButtonElement>("kSing").disabled = !song;
   $<HTMLButtonElement>("kSave").disabled = !song;
+  $<HTMLButtonElement>("kMidi").disabled = !song;
 }
 
 const isSongFile = (f: File) => /\.json$/i.test(f.name);
@@ -163,7 +162,7 @@ function describe(s: Song): string {
   const mark = (name: string) => (audioFiles.has(name) ? "○" : `× (${name})`);
   lines.push(`声: ${mark(voiceName)}` + (s.instFile ? `　伴奏: ${mark(s.instFile)}` : ""));
   const missing = trackNames(s).filter((n) => !audioFiles.has(n));
-  if (missing.length) lines.push("足りない音声はガイド音で代わりに鳴らします。まとめて選び直すと読み込めます。");
+  if (missing.length) lines.push("お手本の声がない間は、代わりにガイドメロディを鳴らします。まとめて選び直すと読み込めます。");
   return lines.join("\n");
 }
 
@@ -174,10 +173,20 @@ function summary(s: Song): string {
 
 function save() {
   if (!song) return;
-  const blob = new Blob([serializeSong(song)], { type: "application/json" });
+  download(new Blob([serializeSong(song)], { type: "application/json" }), `${song.title}.domiso.json`);
+}
+
+function saveMidi() {
+  if (!song) return;
+  // Shift by the chosen octave, so the file matches what you sing along with.
+  const notes = song.notes.map((n) => ({ ...n, midi: n.midi + 12 * prefs.octave }));
+  download(new Blob([melodyToMidi(notes, song.title)], { type: "audio/midi" }), `${song.title}.guide.mid`);
+}
+
+function download(blob: Blob, name: string) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${song.title}.domiso.json`;
+  a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
 }
@@ -195,7 +204,7 @@ async function sing() {
     };
     const tracks = { voice: await load(song.vocalsFile ?? song.audioName), inst: await load(song.instFile) };
     player = new KaraokePlayer(a.ctx, song, tracks, {
-      guide: prefs.guide,
+      play: { inst: prefs.playInst, voice: prefs.playVoice, melody: prefs.playMelody },
       octave: prefs.octave,
       tolerance: prefs.tolerance,
       octaveFree: prefs.octaveFree,

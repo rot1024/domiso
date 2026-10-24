@@ -2,8 +2,15 @@ import type { PitchSample } from "../pitch";
 import { centsOff, freqToMidi, midiToFreq } from "../theory";
 import { noteAt, type Song, type SongNote } from "./song";
 
-/** What plays while you sing: backing track and/or reference voice, a synthesized guide tone, or nothing. */
-export type Guide = "both" | "inst" | "voice" | "tone" | "none";
+/** What plays while you sing; any combination. */
+export interface Playback {
+  /** The backing track. */
+  inst: boolean;
+  /** The reference singer's recording. */
+  voice: boolean;
+  /** A synthesized guide melody played from the bars. */
+  melody: boolean;
+}
 
 export interface Tracks {
   /** The reference singer (the original vocal recording, or a separated vocal track). */
@@ -14,9 +21,10 @@ export interface Tracks {
 
 /** With the backing track also playing, the reference voice is a guide, so it sits lower. */
 const VOICE_GAIN_UNDER_INST = 0.5;
+const MELODY_GAIN = 0.22;
 
 export interface PlayerOptions {
-  guide: Guide;
+  play: Playback;
   /** Shift of the reference melody in octaves (e.g. -1 to sing a female part an octave down). */
   octave: number;
   tolerance: number;
@@ -63,7 +71,7 @@ export class KaraokePlayer {
   private pausedAt = 0;
   private playing = false;
   private sources: AudioBufferSourceNode[] = [];
-  private guideOut: GainNode | null = null;
+  private melodyOut: GainNode | null = null;
   private scheduledUntil = 0;
   private timer: number | undefined;
 
@@ -108,16 +116,16 @@ export class KaraokePlayer {
     this.t0 = at - this.pausedAt;
     this.playing = true;
 
-    const { guide } = this.opts;
+    const { play } = this.opts;
     const { voice, inst } = this.tracks;
-    const wantInst = guide === "both" || guide === "inst";
-    const wantVoice = guide === "both" || guide === "voice";
-    if (wantInst && inst) this.startTrack(inst, at, 1);
-    if (wantVoice && voice) this.startTrack(voice, at, wantInst && inst ? VOICE_GAIN_UNDER_INST : 1);
-    // Without the reference voice, the guide tone carries the melody instead.
-    if (guide === "tone" || (wantVoice && !voice)) {
-      this.guideOut = this.ctx.createGain();
-      this.guideOut.connect(this.ctx.destination);
+    const instOn = play.inst && !!inst;
+    if (instOn) this.startTrack(inst!, at, 1);
+    if (play.voice && voice) this.startTrack(voice, at, instOn ? VOICE_GAIN_UNDER_INST : 1);
+    // Without the reference recording, the guide melody carries the tune instead.
+    if (play.melody || (play.voice && !voice)) {
+      this.melodyOut = this.ctx.createGain();
+      this.melodyOut.gain.value = MELODY_GAIN;
+      this.melodyOut.connect(this.ctx.destination);
       this.scheduledUntil = this.pausedAt;
     }
     this.timer = window.setInterval(() => this.tick(), 100);
@@ -164,9 +172,9 @@ export class KaraokePlayer {
       src.disconnect();
     }
     this.sources = [];
-    // Disconnecting the guide bus silences every oscillator already scheduled on it.
-    this.guideOut?.disconnect();
-    this.guideOut = null;
+    // Disconnecting the melody bus silences every oscillator already scheduled on it.
+    this.melodyOut?.disconnect();
+    this.melodyOut = null;
   }
 
   private tick() {
@@ -177,27 +185,36 @@ export class KaraokePlayer {
       this.onEnd();
       return;
     }
-    if (this.guideOut) this.scheduleGuide(pos + 1);
+    if (this.melodyOut) this.scheduleMelody(pos + 1);
   }
 
-  /** Schedules guide-tone notes starting before `until` (song time). */
-  private scheduleGuide(until: number) {
-    const out = this.guideOut!;
+  /**
+   * Schedules guide-melody notes starting before `until` (song time). A soft flute-like tone (sine plus a
+   * quiet octave) stays clear on top of a band without sounding like the singer.
+   */
+  private scheduleMelody(until: number) {
+    const out = this.melodyOut!;
     for (const n of this.notes) {
       if (n.start < this.scheduledUntil || n.start >= until) continue;
-      const at = this.t0 + n.start;
-      const dur = n.end - n.start;
-      const osc = this.ctx.createOscillator();
+      const at = Math.max(this.ctx.currentTime, this.t0 + n.start);
+      const end = this.t0 + n.end;
+      if (end <= at) continue;
+      const release = Math.min(0.06, (end - at) / 3);
       const g = this.ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = midiToFreq(n.midi);
       g.gain.setValueAtTime(0, at);
-      g.gain.linearRampToValueAtTime(0.2, at + 0.02);
-      g.gain.setValueAtTime(0.2, at + Math.max(0.02, dur - 0.04));
-      g.gain.linearRampToValueAtTime(0, at + dur);
-      osc.connect(g).connect(out);
-      osc.start(at);
-      osc.stop(at + dur + 0.02);
+      g.gain.linearRampToValueAtTime(1, at + 0.025);
+      g.gain.setValueAtTime(1, end - release);
+      g.gain.linearRampToValueAtTime(0, end);
+      g.connect(out);
+      for (const [mult, level] of [[1, 1], [2, 0.25]] as const) {
+        const osc = this.ctx.createOscillator();
+        osc.frequency.value = midiToFreq(n.midi) * mult;
+        const lv = this.ctx.createGain();
+        lv.gain.value = level;
+        osc.connect(lv).connect(g);
+        osc.start(at);
+        osc.stop(end + 0.02);
+      }
     }
     this.scheduledUntil = until;
   }
