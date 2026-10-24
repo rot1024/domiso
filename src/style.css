@@ -1,0 +1,258 @@
+:root {
+  --bg: #14161c;
+  --panel: #1f222b;
+  --border: #323643;
+  --text: #e8e9ee;
+  --muted: #8b90a0;
+  --accent: #5b8cff;
+  --good: #3ecf8e;
+  --bad: #ff6b6b;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.screen {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+
+[hidden] {
+  display: none !important;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 8px 0 16px;
+}
+
+h2 {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 20px 0 8px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+button.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+}
+
+.seg {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.seg button {
+  padding: 10px 4px;
+  font-size: 0.9rem;
+}
+
+.modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.modes button {
+  text-align: left;
+  padding: 12px;
+}
+
+.modes small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
+.toggles {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.toggles input {
+  width: 20px;
+  height: 20px;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 1.2em;
+}
+
+.error {
+  color: var(--bad);
+  font-size: 0.9rem;
+}
+
+button.primary {
+  width: 100%;
+  padding: 16px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.primary:disabled {
+  opacity: 0.6;
+}
+
+/* Practice screen */
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.chord {
+  font-size: 4.5rem;
+  font-weight: 800;
+  text-align: center;
+  margin: 24px 0 8px;
+  letter-spacing: 0.02em;
+}
+
+.steps {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.steps span {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  border: 2px solid var(--border);
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.steps span.current {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.steps span.current.in-tune {
+  border-color: var(--good);
+  background: color-mix(in srgb, var(--good) 25%, var(--panel));
+}
+
+.steps span.done {
+  color: var(--text);
+  opacity: 0.5;
+}
+
+.message {
+  text-align: center;
+  font-size: 1.15rem;
+  min-height: 3em;
+  margin: 18px 0 10px;
+}
+
+.meter {
+  position: relative;
+  height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.meter .zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  background: color-mix(in srgb, var(--good) 20%, transparent);
+  transform: translateX(-50%);
+}
+
+.meter .center {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  background: var(--good);
+  transform: translateX(-50%);
+}
+
+.meter .needle {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 50%;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--text);
+  transform: translateX(-50%);
+  transition: left 60ms linear;
+  opacity: 0;
+}
+
+.meter .flat,
+.meter .sharp {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+
+.meter .flat {
+  left: 10px;
+}
+
+.meter .sharp {
+  right: 10px;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 220px;
+  margin: 14px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+#stop {
+  width: 100%;
+  padding: 14px;
+}

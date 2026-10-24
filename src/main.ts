@@ -1,0 +1,304 @@
+import { PitchTracker, type PitchSample } from "./pitch";
+import { Sound } from "./sound";
+import { centsOff, DEGREE_LABELS, freqToMidi, midiName, midiToFreq, VOICE_PRESETS } from "./theory";
+import { AID_LABELS, MODES, Trainer, type Mode, type Settings, type TrainerState } from "./trainer";
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+interface Prefs {
+  voice: string;
+  mode: Mode;
+  tolerance: number;
+  rounds: number;
+  headphones: boolean;
+  speech: boolean;
+  octaveFree: boolean;
+}
+
+const PREFS_KEY = "domiso:prefs";
+const prefs: Prefs = {
+  voice: "high-male",
+  mode: "unison",
+  tolerance: 30,
+  rounds: 10,
+  headphones: true,
+  speech: true,
+  octaveFree: false,
+  ...loadPrefs(),
+};
+
+function loadPrefs(): Partial<Prefs> {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function savePrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Storage may be unavailable (private mode); preferences just won't persist.
+  }
+}
+
+/** Renders a row of single-choice buttons bound to a preference. */
+function choices<K extends keyof Prefs>(
+  container: HTMLElement,
+  key: K,
+  options: { value: Prefs[K]; label: string; sub?: string }[],
+) {
+  const render = () => {
+    container.replaceChildren(
+      ...options.map((o) => {
+        const b = document.createElement("button");
+        b.textContent = o.label;
+        if (o.sub) {
+          const s = document.createElement("small");
+          s.textContent = o.sub;
+          b.append(s);
+        }
+        b.classList.toggle("selected", prefs[key] === o.value);
+        b.onclick = () => {
+          prefs[key] = o.value;
+          savePrefs();
+          render();
+          updateHint();
+        };
+        return b;
+      }),
+    );
+  };
+  render();
+}
+
+function checkbox(key: "headphones" | "speech" | "octaveFree") {
+  const el = $<HTMLInputElement>(key);
+  el.checked = prefs[key];
+  el.onchange = () => {
+    prefs[key] = el.checked;
+    savePrefs();
+    updateHint();
+  };
+}
+
+function updateHint() {
+  const hint =
+    !prefs.headphones && prefs.mode === "unison"
+      ? "イヤホンなしではピアノの音をマイクが拾うため、ピアノの後に歌う方式になります。"
+      : !prefs.headphones
+        ? "イヤホンなしの場合、ピアノが鳴っている間は判定しません。"
+        : "";
+  $("hint").textContent = hint;
+}
+
+choices(
+  $("voice"),
+  "voice",
+  VOICE_PRESETS.map((p) => ({ value: p.id, label: p.label })),
+);
+choices(
+  $("mode"),
+  "mode",
+  (Object.keys(MODES) as Mode[]).map((m) => ({ value: m, label: MODES[m].label, sub: MODES[m].description })),
+);
+choices($("tolerance"), "tolerance", [
+  { value: 50, label: "甘め ±50¢" },
+  { value: 30, label: "ふつう ±30¢" },
+  { value: 15, label: "厳しめ ±15¢" },
+]);
+choices($("rounds"), "rounds", [
+  { value: 5, label: "5" },
+  { value: 10, label: "10" },
+  { value: 20, label: "20" },
+  { value: 0, label: "エンドレス" },
+]);
+checkbox("headphones");
+checkbox("speech");
+checkbox("octaveFree");
+updateHint();
+
+// --- Session ---
+
+let ctx: AudioContext | null = null;
+let tracker: PitchTracker | null = null;
+let sound: Sound | null = null;
+let trainer: Trainer | null = null;
+let wakeLock: WakeLockSentinel | null = null;
+let settings: Settings | null = null;
+const history: { time: number; midi: number | null }[] = [];
+
+$("start").onclick = async () => {
+  const startBtn = $<HTMLButtonElement>("start");
+  $("error").textContent = "";
+  startBtn.disabled = true;
+  try {
+    // Everything audio-related must be created inside this tap for iOS to allow playback.
+    ctx ??= new AudioContext();
+    await ctx.resume();
+    sound ??= new Sound(ctx);
+    sound.unlockSpeech();
+    tracker ??= await PitchTracker.open(ctx);
+
+    const home = VOICE_PRESETS.find((p) => p.id === prefs.voice)!.home;
+    startBtn.textContent = "ピアノ読み込み中…";
+    const notes = Array.from({ length: 20 }, (_, i) => home - 6 + i);
+    await sound.loadPiano(notes, (loaded, total) => {
+      startBtn.textContent = `ピアノ読み込み中… ${loaded}/${total}`;
+    });
+
+    settings = { home, ...prefs };
+    begin(settings);
+  } catch (e) {
+    console.error(e);
+    $("error").textContent =
+      e instanceof DOMException && e.name === "NotAllowedError"
+        ? "マイクの使用を許可してください。"
+        : `開始できませんでした: ${e}`;
+  } finally {
+    startBtn.disabled = false;
+    startBtn.textContent = "スタート";
+  }
+};
+
+$("stop").onclick = () => end();
+
+function begin(s: Settings) {
+  $("setup").hidden = true;
+  $("practice").hidden = false;
+  $("modeLabel").textContent = MODES[s.mode].label;
+  $("zone").style.width = `${(s.tolerance / 100) * 50}%`;
+  history.length = 0;
+
+  trainer = new Trainer(sound!, s);
+  trainer.onState = renderState;
+  renderState(trainer.state);
+  tracker!.onSample = onSample;
+  tracker!.start();
+  void requestWakeLock();
+  requestAnimationFrame(draw);
+  void trainer.run().then(() => {
+    if (trainer?.state.phase === "done") $<HTMLButtonElement>("stop").textContent = "もどる";
+  });
+}
+
+function end() {
+  trainer?.stop();
+  trainer = null;
+  tracker?.stop();
+  void wakeLock?.release();
+  wakeLock = null;
+  $("practice").hidden = true;
+  $("setup").hidden = false;
+  $("stop").textContent = "やめる";
+}
+
+async function requestWakeLock() {
+  try {
+    wakeLock = await navigator.wakeLock?.request("screen");
+  } catch {
+    // Not supported or denied; the session still works while the screen stays on.
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  // The lock is released whenever the page is hidden; take it again on return.
+  if (document.visibilityState === "visible" && trainer) void requestWakeLock();
+});
+
+function onSample(s: PitchSample) {
+  trainer?.handleSample(s);
+  history.push({ time: s.time, midi: s.freq === null ? null : freqToMidi(s.freq) });
+  while (history.length && s.time - history[0].time > GRAPH_SECONDS) history.shift();
+
+  const needle = $("needle");
+  const target = trainer?.state.target;
+  if (s.freq === null || target == null || trainer?.state.phase !== "listen") {
+    needle.style.opacity = "0";
+    return;
+  }
+  const cents = Math.max(-100, Math.min(100, centsOff(s.freq, target, settings!.octaveFree)));
+  needle.style.opacity = "1";
+  needle.style.left = `${50 + cents / 2}%`;
+  needle.style.background = Math.abs(cents) <= settings!.tolerance ? "var(--good)" : "var(--text)";
+}
+
+function renderState(s: TrainerState) {
+  $("chord").textContent = s.chord;
+  $("message").textContent = s.message;
+  $("aidLabel").textContent = `補助: ${AID_LABELS[s.aid]}`;
+  $("score").textContent = `${s.round}${settings?.rounds ? `/${settings.rounds}` : ""}  ✓${s.passed}/${s.attempted}`;
+  $("steps").replaceChildren(
+    ...s.order.map((degree, i) => {
+      const el = document.createElement("span");
+      el.textContent = DEGREE_LABELS[degree];
+      el.classList.toggle("done", i < s.step);
+      el.classList.toggle("current", i === s.step && s.phase !== "done");
+      el.classList.toggle("in-tune", i === s.step && s.inTune);
+      return el;
+    }),
+  );
+}
+
+// --- Pitch graph ---
+
+const GRAPH_SECONDS = 6;
+
+function draw() {
+  if (!trainer || !ctx) return;
+  const canvas = $<HTMLCanvasElement>("graph");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth * dpr;
+  const h = canvas.clientHeight * dpr;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const g = canvas.getContext("2d")!;
+  g.clearRect(0, 0, w, h);
+
+  const { tones, target } = trainer.state;
+  if (tones.length) {
+    const lo = tones[0] - 3;
+    const hi = tones[2] + 3;
+    const y = (midi: number) => h - ((midi - lo) / (hi - lo)) * h;
+    const tolSemis = settings!.tolerance / 100;
+
+    tones.forEach((m, i) => {
+      const active = m === target;
+      g.fillStyle = active ? "rgba(62,207,142,0.22)" : "rgba(255,255,255,0.06)";
+      g.fillRect(0, y(m + tolSemis), w, y(m - tolSemis) - y(m + tolSemis));
+      g.strokeStyle = active ? "#3ecf8e" : "rgba(255,255,255,0.25)";
+      g.lineWidth = dpr;
+      g.beginPath();
+      g.moveTo(0, y(m));
+      g.lineTo(w, y(m));
+      g.stroke();
+      g.fillStyle = active ? "#3ecf8e" : "#8b90a0";
+      g.font = `${12 * dpr}px system-ui`;
+      g.fillText(`${DEGREE_LABELS[i]} ${midiName(m)}`, 6 * dpr, y(m) - 4 * dpr);
+    });
+
+    const now = ctx.currentTime;
+    g.strokeStyle = "#e8e9ee";
+    g.lineWidth = 2.5 * dpr;
+    g.beginPath();
+    let drawing = false;
+    for (const p of history) {
+      if (p.midi === null) {
+        drawing = false;
+        continue;
+      }
+      let m = p.midi;
+      // With octave-free judging, show the voice folded into the chord's octave.
+      if (settings!.octaveFree && target != null) m = target + centsOff(midiToFreq(m), target, true) / 100;
+      const x = w - ((now - p.time) / GRAPH_SECONDS) * w;
+      if (drawing) g.lineTo(x, y(m));
+      else g.moveTo(x, y(m));
+      drawing = true;
+    }
+    g.stroke();
+  }
+  requestAnimationFrame(draw);
+}
