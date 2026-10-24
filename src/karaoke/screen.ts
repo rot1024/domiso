@@ -25,6 +25,7 @@ export function initKaraoke() {
   checkbox("playInst");
   checkbox("playVoice");
   checkbox("playMelody");
+  checkbox("playOriginal");
   choices($("octave"), "octave", [
     { value: -1, label: "1つ下" },
     { value: 0, label: "そのまま" },
@@ -118,7 +119,7 @@ async function openFiles(files: File[]) {
 
 /** File names a song can play: the reference voice and the backing track. */
 function trackNames(s: Song): string[] {
-  return [s.vocalsFile ?? s.audioName, ...(s.instFile ? [s.instFile] : [])];
+  return [s.vocalsFile ?? s.audioName, ...[s.instFile, s.originalFile].filter((n) => n !== undefined)];
 }
 
 async function analyzeAudio(file: File) {
@@ -166,8 +167,13 @@ function describe(s: Song): string {
   const voiceName = s.vocalsFile ?? s.audioName;
   const lines = [summary(s)];
   const mark = (name: string) => (audioFiles.has(name) ? "○" : `× (${name})`);
-  lines.push(`声: ${mark(voiceName)}` + (s.instFile ? `　伴奏: ${mark(s.instFile)}` : ""));
-  const missing = trackNames(s).filter((n) => !audioFiles.has(n));
+  lines.push(
+    `声: ${mark(voiceName)}` +
+      (s.instFile ? `　伴奏: ${mark(s.instFile)}` : "") +
+      (s.originalFile ? `　原曲: ${audioFiles.has(s.originalFile) ? "○" : "×"}` : ""),
+  );
+  // The original is optional; only missing voice or backing is worth a note.
+  const missing = trackNames(s).filter((n) => n !== s.originalFile && !audioFiles.has(n));
   if (missing.length) lines.push("お手本の声がない間は、代わりにガイドメロディを鳴らします。まとめて選び直すと読み込めます。");
   return lines.join("\n");
 }
@@ -213,9 +219,10 @@ async function sing() {
       // Only the original file may have skipped silence; CLI tracks are already trimmed.
       voiceOffset: song.vocalsFile ? 0 : (song.audioStart ?? 0),
       inst: await load(song.instFile),
+      original: await load(song.originalFile),
     };
     player = new KaraokePlayer(a.ctx, song, tracks, {
-      play: { inst: prefs.playInst, voice: prefs.playVoice, melody: prefs.playMelody },
+      play: { inst: prefs.playInst, voice: prefs.playVoice, melody: prefs.playMelody, original: prefs.playOriginal },
       octave: prefs.octave,
       tolerance: prefs.tolerance,
       octaveFree: prefs.octaveFree,

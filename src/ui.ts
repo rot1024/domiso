@@ -16,6 +16,7 @@ export interface Prefs {
   playInst: boolean;
   playVoice: boolean;
   playMelody: boolean;
+  playOriginal: boolean;
   /** Karaoke: shift the reference melody by octaves. */
   octave: number;
   /** Karaoke: extra delay compensation in ms on top of what the browser reports. */
@@ -39,6 +40,7 @@ export const prefs: Prefs = {
   playInst: true,
   playVoice: true,
   playMelody: false,
+  playOriginal: false,
   octave: 0,
   latencyMs: 0,
   showContour: true,

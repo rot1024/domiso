@@ -21,6 +21,8 @@ export interface Song {
   vocalsFile?: string;
   /** File name of the instrumental track, when there is one (played as the backing track). */
   instFile?: string;
+  /** File name of the original song cut to the same timeline, when the CLI made one. */
+  originalFile?: string;
   duration: number;
   /** Contour resolution in seconds. */
   hop: number;
@@ -43,7 +45,7 @@ export function parseSong(text: string): Song {
   if (d?.format !== "domiso-karaoke") throw new Error("domiso の解析データではありません");
   if (d.version !== 1) throw new Error(`対応していないバージョンです (${d.version})`);
   if (!Array.isArray(d.notes) || !Array.isArray(d.contour)) throw new Error("解析データが壊れています");
-  for (const k of ["vocalsFile", "instFile"]) {
+  for (const k of ["vocalsFile", "instFile", "originalFile"]) {
     if (d[k] !== undefined && typeof d[k] !== "string") throw new Error("解析データが壊れています");
   }
   if (d.audioStart !== undefined && typeof d.audioStart !== "number") throw new Error("解析データが壊れています");

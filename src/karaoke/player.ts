@@ -10,6 +10,8 @@ export interface Playback {
   voice: boolean;
   /** A synthesized guide melody played from the bars. */
   melody: boolean;
+  /** The original song (vocals and backing together). */
+  original: boolean;
 }
 
 export interface Tracks {
@@ -19,6 +21,8 @@ export interface Tracks {
   voiceOffset: number;
   /** The backing track. */
   inst: AudioBuffer | null;
+  /** The original song, on the same timeline. */
+  original: AudioBuffer | null;
 }
 
 /** With the backing track also playing, the reference voice is a guide, so it sits lower. */
@@ -119,11 +123,15 @@ export class KaraokePlayer {
 
     const { play } = this.opts;
     const { voice, inst } = this.tracks;
-    const instOn = play.inst && !!inst;
+    // The original already contains backing and voice, so it replaces them.
+    const originalOn = play.original && !!this.tracks.original;
+    const instOn = play.inst && !!inst && !originalOn;
+    const voiceOn = play.voice && !!voice && !originalOn;
+    if (originalOn) this.startTrack(this.tracks.original!, at, 1, 0);
     if (instOn) this.startTrack(inst!, at, 1, 0);
-    if (play.voice && voice) this.startTrack(voice, at, instOn ? VOICE_GAIN_UNDER_INST : 1, this.tracks.voiceOffset);
+    if (voiceOn) this.startTrack(voice!, at, instOn ? VOICE_GAIN_UNDER_INST : 1, this.tracks.voiceOffset);
     // Without the reference recording, the guide melody carries the tune instead.
-    if (play.melody || (play.voice && !voice)) {
+    if (play.melody || (play.voice && !voice && !originalOn)) {
       this.melodyOut = this.ctx.createGain();
       this.melodyOut.gain.value = MELODY_GAIN;
       this.melodyOut.connect(this.ctx.destination);
