@@ -86,19 +86,16 @@
 
     <main id="karaokeSetup" class="screen" hidden>
       <h1>カラオケ</h1>
-      <p class="hint">声だけの音声（先生の手本の録音、アカペラなど）から音程のバーを作り、それに合わせて歌います。</p>
+      <p class="hint">
+        声だけの音声（先生の手本の録音、アカペラなど）を1つ選ぶと、音程のバーを作って一緒に歌えます。
+        CLI で作ったデータは、.domiso.json と音声ファイルをまとめて選びます。
+      </p>
 
-      <div class="files">
-        <label class="file-btn">
-          <input type="file" id="audioFile" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg" hidden />
-          音声ファイルを選ぶ
-        </label>
-        <label class="file-btn">
-          <input type="file" id="songFile" accept=".json,application/json" hidden />
-          解析データを開く
-        </label>
-      </div>
-      <p class="kstatus" id="kStatus">音声ファイルを選ぶと自動で解析します。</p>
+      <label class="file-btn">
+        <input type="file" id="kFiles" multiple accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.json,application/json" hidden />
+        ファイルを開く
+      </label>
+      <p class="kstatus" id="kStatus"></p>
 
       <section>
         <h2>流す音</h2>

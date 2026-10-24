@@ -2,7 +2,18 @@ import type { PitchSample } from "../pitch";
 import { centsOff, freqToMidi, midiToFreq } from "../theory";
 import { noteAt, type Song, type SongNote } from "./song";
 
-export type Guide = "voice" | "tone" | "none";
+/** What plays while you sing: backing track and/or reference voice, a synthesized guide tone, or nothing. */
+export type Guide = "both" | "inst" | "voice" | "tone" | "none";
+
+export interface Tracks {
+  /** The reference singer (the original vocal recording, or a separated vocal track). */
+  voice: AudioBuffer | null;
+  /** The backing track. */
+  inst: AudioBuffer | null;
+}
+
+/** With the backing track also playing, the reference voice is a guide, so it sits lower. */
+const VOICE_GAIN_UNDER_INST = 0.5;
 
 export interface PlayerOptions {
   guide: Guide;
@@ -51,7 +62,7 @@ export class KaraokePlayer {
   private t0 = 0;
   private pausedAt = 0;
   private playing = false;
-  private source: AudioBufferSourceNode | null = null;
+  private sources: AudioBufferSourceNode[] = [];
   private guideOut: GainNode | null = null;
   private scheduledUntil = 0;
   private timer: number | undefined;
@@ -59,7 +70,7 @@ export class KaraokePlayer {
   constructor(
     private ctx: AudioContext,
     readonly song: Song,
-    private buffer: AudioBuffer | null,
+    private tracks: Tracks,
     private opts: PlayerOptions,
   ) {
     const shift = 12 * opts.octave + song.offsetCents / 100;
@@ -68,7 +79,8 @@ export class KaraokePlayer {
   }
 
   get duration(): number {
-    return this.buffer?.duration ?? this.song.duration;
+    const durations = [this.tracks.voice, this.tracks.inst].filter((b) => b !== null).map((b) => b.duration);
+    return durations.length ? Math.max(...durations) : this.song.duration;
   }
 
   get isPlaying(): boolean {
@@ -96,19 +108,30 @@ export class KaraokePlayer {
     this.t0 = at - this.pausedAt;
     this.playing = true;
 
-    if (this.opts.guide === "voice" && this.buffer) {
-      this.source = this.ctx.createBufferSource();
-      this.source.buffer = this.buffer;
-      this.source.connect(this.ctx.destination);
-      this.source.start(at, this.pausedAt);
-    }
-    if (this.opts.guide === "tone" || (this.opts.guide === "voice" && !this.buffer)) {
+    const { guide } = this.opts;
+    const { voice, inst } = this.tracks;
+    const wantInst = guide === "both" || guide === "inst";
+    const wantVoice = guide === "both" || guide === "voice";
+    if (wantInst && inst) this.startTrack(inst, at, 1);
+    if (wantVoice && voice) this.startTrack(voice, at, wantInst && inst ? VOICE_GAIN_UNDER_INST : 1);
+    // Without the reference voice, the guide tone carries the melody instead.
+    if (guide === "tone" || (wantVoice && !voice)) {
       this.guideOut = this.ctx.createGain();
       this.guideOut.connect(this.ctx.destination);
       this.scheduledUntil = this.pausedAt;
     }
     this.timer = window.setInterval(() => this.tick(), 100);
     this.tick();
+  }
+
+  private startTrack(buffer: AudioBuffer, at: number, gain: number) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = this.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(this.ctx.destination);
+    src.start(at, this.pausedAt);
+    this.sources.push(src);
   }
 
   pause() {
@@ -136,9 +159,11 @@ export class KaraokePlayer {
 
   private stopOutput() {
     window.clearInterval(this.timer);
-    this.source?.stop();
-    this.source?.disconnect();
-    this.source = null;
+    for (const src of this.sources) {
+      src.stop();
+      src.disconnect();
+    }
+    this.sources = [];
     // Disconnecting the guide bus silences every oscillator already scheduled on it.
     this.guideOut?.disconnect();
     this.guideOut = null;

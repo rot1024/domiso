@@ -8,14 +8,17 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "test": "vitest run"
+    "test": "vitest run",
+    "cli": "tsx cli/domiso.ts"
   },
   "dependencies": {
     "pitchy": "^4.1.0",
     "smplr": "^1.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.0.5"

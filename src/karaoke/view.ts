@@ -8,6 +8,11 @@ const FUTURE = 5.6;
 const NOW_X = PAST / (PAST + FUTURE);
 const HALF_SPAN = 7;
 const BAR_HEIGHT = 0.8;
+/**
+ * Consecutive points further apart than this (semitones) are not joined: a voice can't glide that fast,
+ * so it's a detection blip (consonant, octave error) and a line would draw a misleading vertical stroke.
+ */
+const MAX_JUMP = 2.5;
 
 /** Scrolling karaoke view: upcoming bars flow in from the right; your voice is drawn up to "now". */
 export class KaraokeView {
@@ -71,16 +76,12 @@ export class KaraokeView {
       g.strokeStyle = "rgba(255,255,255,0.28)";
       g.lineWidth = 1.5 * dpr;
       g.beginPath();
-      let drawing = false;
+      let last: number | null = null;
       for (let i = from; i < to; i++) {
         const m = p.midiOfContour(i);
-        if (m === null) {
-          drawing = false;
-          continue;
-        }
-        if (drawing) g.lineTo(x(i * hop), y(m));
-        else g.moveTo(x(i * hop), y(m));
-        drawing = true;
+        if (m !== null && last !== null && Math.abs(m - last) <= MAX_JUMP) g.lineTo(x(i * hop), y(m));
+        else if (m !== null) g.moveTo(x(i * hop), y(m));
+        last = m;
       }
       g.stroke();
     }
@@ -94,7 +95,7 @@ export class KaraokeView {
         prev = null;
         continue;
       }
-      if (prev && s.t - prev.t < 0.1) {
+      if (prev && s.t - prev.t < 0.1 && Math.abs(s.midi - prev.m) <= MAX_JUMP) {
         const i = noteAt(p.notes, s.t);
         const inTune = i >= 0 && Math.abs(s.midi - p.notes[i].midi) <= tol;
         g.strokeStyle = inTune ? "#3ecf8e" : "#e8e9ee";

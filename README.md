@@ -35,9 +35,37 @@
 曲の最後にスコア（バーの時間のうち判定の幅に入っていた割合）、合格した音符の数、全体の高め・低めの傾向を出す。
 
 - 録音全体が平均律から少しずれていても（A=442 など）、そのずれを推定して判定に反映する
-- 流す音は「お手本の声」「バーから作ったガイド音」「なし」から選べる。オクターブを上下に移せる
+- 流す音は「伴奏+声」「伴奏」「声」「バーから作ったガイド音」「なし」から選べる。オクターブを上下に移せる
 - 解析データは `*.domiso.json` として保存でき、次回は開くだけで解析を省ける。音声なしで開くとガイド音で歌える
+- 伴奏付きの曲は、下の CLI で声と伴奏に分けてから使う
 - 自分の線がバーより遅れて見えるときは「遅延補正」で合わせる
+
+## CLI（伴奏付きの曲からカラオケデータを作る）
+
+PC で AI によるボーカル分離（[audio-separator](https://github.com/nomadkaraoke/python-audio-separator)、
+既定モデルは Mel-Band RoFormer）を行い、アプリと同じコードで音程を解析する。
+
+```sh
+pnpm cli 曲.wav                       # 声と伴奏の両方を AI で分離
+pnpm cli 曲.wav --inst 曲-inst.wav    # 公式インストがあれば、位置を合わせて伴奏に使う
+```
+
+出力先（既定は `./<曲名>/`）に `<曲名>.domiso.json`、`<曲名>.vocals.m4a`、`<曲名>.inst.m4a` ができる。
+スマホに移し、カラオケの「ファイルを開く」で3つまとめて選ぶ。
+
+必要なもの: Node.js、ffmpeg、Python と audio-separator。
+
+```sh
+python3 -m venv ~/.venvs/domiso && . ~/.venvs/domiso/bin/activate
+# NVIDIA GPU を使う場合（CPU だけなら --index-url なしでよい）
+pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu128
+# Linux では依存パッケージの diffq のビルドに C コンパイラが必要（sudo apt install build-essential）
+pip install "audio-separator[gpu]"
+```
+
+venv を有効にしていない場合は `--separator ~/.venvs/domiso/bin/audio-separator` で場所を指定する。
+初回はモデル（数百MB）を `~/.cache/domiso/models` にダウンロードする。
+RTX 5060 Ti では 3分45秒の曲が約30秒で終わる（BS-RoFormer は `--model model_bs_roformer_ep_317_sdr_12.9755.ckpt`。精度はほぼ同じで約5倍遅い）。
 
 ## 開発
 

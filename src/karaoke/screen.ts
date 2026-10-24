@@ -9,8 +9,10 @@ import { KaraokePlayer } from "./player";
 import { parseSong, serializeSong, type Song } from "./song";
 import { KaraokeView } from "./view";
 
-let audio: { name: string; data: ArrayBuffer } | null = null;
-let playbackBuffer: AudioBuffer | null = null;
+/** Audio files the user picked, by file name. */
+let audioFiles = new Map<string, ArrayBuffer>();
+/** Decoded playback buffers, by file name. */
+const decoded = new Map<string, AudioBuffer>();
 let song: Song | null = null;
 let job: AnalysisJob | null = null;
 let player: KaraokePlayer | null = null;
@@ -19,7 +21,9 @@ let tracker: PitchTracker | null = null;
 
 export function initKaraoke() {
   choices($("guide"), "guide", [
-    { value: "voice", label: "お手本の声" },
+    { value: "both", label: "伴奏+声" },
+    { value: "inst", label: "伴奏" },
+    { value: "voice", label: "声" },
     { value: "tone", label: "ガイド音" },
     { value: "none", label: "なし" },
   ]);
@@ -50,13 +54,11 @@ export function initKaraoke() {
 
   $("openKaraoke").onclick = () => show("karaokeSetup");
   $("kBack").onclick = () => show("setup");
-  $<HTMLInputElement>("audioFile").onchange = (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) void loadAudio(file);
-  };
-  $<HTMLInputElement>("songFile").onchange = (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (file) void loadSong(file);
+  $<HTMLInputElement>("kFiles").onchange = (e) => {
+    const input = e.target as HTMLInputElement;
+    const files = [...(input.files ?? [])];
+    input.value = ""; // Allow picking the same files again.
+    if (files.length) void openFiles(files);
   };
   $("kSave").onclick = save;
   $("kSing").onclick = () => void sing();
@@ -79,26 +81,62 @@ function updateButtons() {
   $<HTMLButtonElement>("kSave").disabled = !song;
 }
 
-async function loadAudio(file: File) {
-  $("kError").textContent = "";
-  job?.cancel();
-  audio = { name: file.name, data: await file.arrayBuffer() };
-  playbackBuffer = null;
+const isSongFile = (f: File) => /\.json$/i.test(f.name);
 
-  // Opened analysis data for this same file: no need to analyze again.
-  if (song && song.audioName === file.name) {
-    status(summary(song));
-    updateButtons();
-    return;
+/**
+ * Accepts either one plain audio file (analyzed here), or analysis data (.domiso.json, e.g. from the CLI)
+ * together with the audio files it names.
+ */
+async function openFiles(files: File[]) {
+  $("kError").textContent = "";
+  const jsons = files.filter(isSongFile);
+  const audios = files.filter((f) => !isSongFile(f));
+  try {
+    if (jsons.length > 1) throw new Error("解析データは1つだけ選んでください");
+    if (jsons.length) {
+      const opened = parseSong(await jsons[0].text());
+      job?.cancel();
+      job = null;
+      song = opened;
+      audioFiles = new Map();
+      decoded.clear();
+    }
+    const known = song ? trackNames(song) : [];
+    if (song && audios.every((f) => known.includes(f.name))) {
+      for (const f of audios) audioFiles.set(f.name, await f.arrayBuffer());
+      status(describe(song));
+    } else if (audios.length === 1 && !jsons.length) {
+      await analyzeAudio(audios[0]);
+    } else {
+      throw new Error("複数の音声は、解析データ (.domiso.json) と一緒に選んでください");
+    }
+  } catch (e) {
+    $("kError").textContent = e instanceof Error ? e.message : String(e);
   }
+  updateButtons();
+}
+
+/** File names a song can play: the reference voice and the backing track. */
+function trackNames(s: Song): string[] {
+  return [s.vocalsFile ?? s.audioName, ...(s.instFile ? [s.instFile] : [])];
+}
+
+async function analyzeAudio(file: File) {
+  job?.cancel();
   song = null;
+  audioFiles = new Map([[file.name, await file.arrayBuffer()]]);
+  decoded.clear();
   updateButtons();
   try {
     status("読み込み中…");
-    const { samples, duration } = await decodeForAnalysis(audio.data);
+    const { samples, duration } = await decodeForAnalysis(audioFiles.get(file.name)!);
     job = analyzeInWorker(samples, (r) => status(`解析中… ${Math.round(r * 100)}%`));
     const result = await job.promise;
     job = null;
+    if (!result.notes.length) {
+      status("声が見つかりませんでした。声だけの音声か確認してください。");
+      return;
+    }
     song = {
       format: "domiso-karaoke",
       version: 1,
@@ -110,31 +148,23 @@ async function loadAudio(file: File) {
       notes: result.notes,
       contour: result.contour,
     };
-    status(result.notes.length ? summary(song) : "声が見つかりませんでした。声だけの音声か確認してください。");
-    if (!result.notes.length) song = null;
+    status(describe(song));
   } catch (e) {
     if (e instanceof Error && e.message === "cancelled") return;
     status("");
     $("kError").textContent = `解析できませんでした: ${e instanceof Error ? e.message : e}`;
   }
-  updateButtons();
 }
 
-async function loadSong(file: File) {
-  $("kError").textContent = "";
-  try {
-    const opened = parseSong(await file.text());
-    job?.cancel();
-    job = null;
-    song = opened;
-    let text = summary(song);
-    if (!audio) text += "\n音声なし: 「お手本の声」の代わりにガイド音が鳴ります。同じ音声ファイルを選ぶと声で歌えます。";
-    else if (audio.name !== song.audioName) text += `\n注意: 解析元の音声は「${song.audioName}」です。`;
-    status(text);
-  } catch (e) {
-    $("kError").textContent = e instanceof Error ? e.message : String(e);
-  }
-  updateButtons();
+/** Summary plus which tracks are loaded, and the names of the ones still missing. */
+function describe(s: Song): string {
+  const voiceName = s.vocalsFile ?? s.audioName;
+  const lines = [summary(s)];
+  const mark = (name: string) => (audioFiles.has(name) ? "○" : `× (${name})`);
+  lines.push(`声: ${mark(voiceName)}` + (s.instFile ? `　伴奏: ${mark(s.instFile)}` : ""));
+  const missing = trackNames(s).filter((n) => !audioFiles.has(n));
+  if (missing.length) lines.push("足りない音声はガイド音で代わりに鳴らします。まとめて選び直すと読み込めます。");
+  return lines.join("\n");
 }
 
 function summary(s: Song): string {
@@ -158,10 +188,13 @@ async function sing() {
   try {
     const a = await openAudio();
     tracker = a.tracker;
-    if (audio && !playbackBuffer && audio.name === song.audioName) {
-      playbackBuffer = await a.ctx.decodeAudioData(audio.data.slice(0));
-    }
-    player = new KaraokePlayer(a.ctx, song, playbackBuffer, {
+    const load = async (name: string | undefined) => {
+      if (!name || !audioFiles.has(name)) return null;
+      if (!decoded.has(name)) decoded.set(name, await a.ctx.decodeAudioData(audioFiles.get(name)!.slice(0)));
+      return decoded.get(name)!;
+    };
+    const tracks = { voice: await load(song.vocalsFile ?? song.audioName), inst: await load(song.instFile) };
+    player = new KaraokePlayer(a.ctx, song, tracks, {
       guide: prefs.guide,
       octave: prefs.octave,
       tolerance: prefs.tolerance,

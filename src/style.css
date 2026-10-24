@@ -284,15 +284,9 @@ canvas.tall {
   font-variant-numeric: tabular-nums;
 }
 
-.files {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 16px;
-}
-
 .file-btn {
   display: block;
+  margin-top: 16px;
   text-align: center;
   background: var(--panel);
   border: 1px solid var(--border);
