@@ -12,7 +12,8 @@ import { spawnSync } from "node:child_process";
 import { recordCommand } from "./record";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { analyze, HOP } from "../src/karaoke/analyze";
 import { encodeWav, renderMelody } from "../src/karaoke/melody";
@@ -24,6 +25,15 @@ import { alignmentLag } from "./align";
 const ANALYSIS_RATE = 22050;
 const ALIGN_RATE = 11025;
 const DEFAULT_MODEL = "vocals_mel_band_roformer.ckpt";
+/** audio-separator from the uv project in cli/separator (installed on first use). */
+const SEPARATOR_VIA_UV = [
+  "uv",
+  "run",
+  "--quiet",
+  "--project",
+  join(dirname(fileURLToPath(import.meta.url)), "separator"),
+  "audio-separator",
+];
 
 const USAGE = `使い方: pnpm cli <曲の音声> [オプション]
        pnpm cli record [オプション]   PC で再生している音を録音（詳しくは pnpm cli record --help）
@@ -33,7 +43,7 @@ const USAGE = `使い方: pnpm cli <曲の音声> [オプション]
   --title <title>      曲名（既定: 入力ファイル名）
   --model <file>       audio-separator のモデル（既定: ${DEFAULT_MODEL}）
   --model-dir <dir>    モデルの保存先（既定: ~/.cache/domiso/models）
-  --separator <cmd>    audio-separator コマンド（既定: audio-separator）
+  --separator <cmd>    audio-separator コマンド（既定: uv で cli/separator の環境から実行）
   --bitrate <rate>     AAC のビットレート（既定: 192k）
   --no-trim            前後の無音をカットしない
   -h, --help           このヘルプ`;
@@ -47,7 +57,7 @@ function main() {
       title: { type: "string" },
       model: { type: "string", default: DEFAULT_MODEL },
       "model-dir": { type: "string", default: join(homedir(), ".cache", "domiso", "models") },
-      separator: { type: "string", default: "audio-separator" },
+      separator: { type: "string" },
       bitrate: { type: "string", default: "192k" },
       "no-trim": { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -62,7 +72,8 @@ function main() {
   if (!existsSync(input)) fail(`ファイルがありません: ${input}`);
   if (values.inst && !existsSync(userPath(values.inst))) fail(`ファイルがありません: ${values.inst}`);
   requireCommand("ffmpeg", ["-version"]);
-  requireCommand(values.separator, ["--version"]);
+  const separator = values.separator ? [values.separator] : SEPARATOR_VIA_UV;
+  requireCommand(separator[0], ["--version"]);
 
   const title = values.title ?? basename(input, extname(input));
   const outDir = userPath(values.out ?? title);
@@ -97,7 +108,8 @@ function main() {
       "--custom_output_names", JSON.stringify({ Vocals: "vocals", Instrumental: "inst", Other: "inst" }),
     ];
     if (values.inst) sepArgs.push("--single_stem", "Vocals");
-    run(values.separator, sepArgs);
+    // The first run through uv installs the Python environment (PyTorch etc.), which takes a while.
+    run(separator[0], [...separator.slice(1), ...sepArgs]);
     const vocalsWav = join(work, "vocals.wav");
     if (!existsSync(vocalsWav)) fail("分離結果のボーカルが見つかりません");
 
@@ -216,7 +228,9 @@ function requireCommand(cmd: string, args: string[]) {
     const hint =
       cmd === "ffmpeg"
         ? "ffmpeg をインストールしてください"
-        : "audio-separator をインストールしてください（README の「CLI」を参照）";
+        : cmd === "uv"
+          ? "uv をインストールしてください（https://docs.astral.sh/uv/）"
+          : "--separator で指定したコマンドを確認してください";
     fail(`${cmd} が見つかりません。${hint}`);
   }
 }

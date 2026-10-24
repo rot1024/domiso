@@ -57,18 +57,16 @@ pnpm cli 曲.wav --inst 曲-inst.wav    # 公式インストがあれば、位�
 `<曲名>.original.m4a`（前後の無音だけカットした原曲）、`<曲名>.guide.m4a` と `<曲名>.guide.mid`（ガイドメロディの音声と MIDI）ができる。
 音声はすべて同じ時間軸にそろっている。スマホに移し、カラオケの「ファイルを開く」で .json と .m4a をまとめて選ぶ（原曲は省いてもよい）。
 
-必要なもの: Node.js、ffmpeg、Python と audio-separator。
+必要なもの: Node.js、ffmpeg、[uv](https://docs.astral.sh/uv/)。
+
+分離に使う Python の環境（audio-separator、PyTorch など）は `cli/separator/` の uv プロジェクトで、
+`pnpm cli` が `uv run` で呼ぶときに自動で用意される（初回は PyTorch などのダウンロードで数分かかる）。前もって入れておくなら:
 
 ```sh
-python3 -m venv ~/.venvs/domiso && . ~/.venvs/domiso/bin/activate
-# NVIDIA GPU を使う場合（CPU だけなら --index-url なしでよい）
-pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu128
-# Linux では依存パッケージの diffq のビルドに C コンパイラが必要（sudo apt install build-essential）
-pip install "audio-separator[gpu]"
+uv sync --project cli/separator
 ```
 
-曲の前後の無音は分離の前にカットする（前 0.2秒・後ろ 0.5秒の余白は残す）。カットしない場合は `--no-trim`。
-venv を有効にしていない場合は `--separator ~/.venvs/domiso/bin/audio-separator` で場所を指定する。
+Linux と Windows では CUDA 版の PyTorch を入れる（GPU がなくても動く）。別の audio-separator を使うときは `--separator <コマンド>`。
 初回はモデル（数百MB）を `~/.cache/domiso/models` にダウンロードする。
 RTX 5060 Ti では 3分45秒の曲が約30秒で終わる（BS-RoFormer は `--model model_bs_roformer_ep_317_sdr_12.9755.ckpt`。精度はほぼ同じで約5倍遅い）。
 

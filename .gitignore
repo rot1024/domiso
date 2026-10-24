@@ -1,4 +1,5 @@
 node_modules
 dist
+.venv/
 # Local scratch: benchmarks, separated audio, Python env, models. Never committed.
 tmp/

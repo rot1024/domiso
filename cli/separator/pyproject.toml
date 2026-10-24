@@ -1,0 +1,32 @@
+# Python environment for the CLI's vocal separation. `pnpm cli` runs it through `uv run`, which installs
+# it on first use; `uv sync --project cli/separator` installs it ahead of time.
+[project]
+name = "domiso-separator"
+version = "0.1.0"
+description = "AI vocal separation (audio-separator) for the domiso CLI"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "audio-separator[gpu]==0.47.1",
+  # Imported by audio-separator but no longer pulled in by librosa.
+  "audioread>=3",
+  "torch>=2.7",
+  "torchaudio>=2.7",
+  "torchvision>=0.22",
+]
+
+[tool.uv]
+package = false
+# diffq only serves quantized Demucs models, which domiso doesn't use, and building it needs a C
+# compiler. A marker that never matches drops it.
+override-dependencies = ["diffq ; sys_platform == 'never'"]
+
+# CUDA builds of PyTorch on Linux and Windows (they also run without a GPU); macOS uses PyPI.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
