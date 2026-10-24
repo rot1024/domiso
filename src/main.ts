@@ -1,5 +1,6 @@
 import { PitchTracker, type PitchSample } from "./pitch";
 import { Sound } from "./sound";
+import { Tuner } from "./tuner";
 import { centsOff, DEGREE_LABELS, freqToMidi, midiName, midiToFreq, VOICE_PRESETS } from "./theory";
 import { AID_LABELS, MODES, Trainer, type Mode, type Settings, type TrainerState } from "./trainer";
 
@@ -147,32 +148,80 @@ $("start").onclick = async () => {
   $("error").textContent = "";
   startBtn.disabled = true;
   try {
-    // Everything audio-related must be created inside this tap for iOS to allow playback.
-    ctx ??= new AudioContext();
-    await ctx.resume();
-    sound ??= new Sound(ctx);
-    sound.unlockSpeech();
-    tracker ??= await PitchTracker.open(ctx);
+    await openAudio();
 
     const home = VOICE_PRESETS.find((p) => p.id === prefs.voice)!.home;
     startBtn.textContent = "ピアノ読み込み中…";
     const notes = Array.from({ length: 20 }, (_, i) => home - 6 + i);
-    await sound.loadPiano(notes, (loaded, total) => {
+    await sound!.loadPiano(notes, (loaded, total) => {
       startBtn.textContent = `ピアノ読み込み中… ${loaded}/${total}`;
     });
 
     settings = { home, ...prefs };
     begin(settings);
   } catch (e) {
-    console.error(e);
-    $("error").textContent =
-      e instanceof DOMException && e.name === "NotAllowedError"
-        ? "マイクの使用を許可してください。"
-        : `開始できませんでした: ${e}`;
+    showError(e);
   } finally {
     startBtn.disabled = false;
     startBtn.textContent = "スタート";
   }
+};
+
+/** Must run inside a tap: iOS only allows audio and speech started from a user gesture. */
+async function openAudio() {
+  ctx ??= new AudioContext();
+  await ctx.resume();
+  sound ??= new Sound(ctx);
+  sound.unlockSpeech();
+  tracker ??= await PitchTracker.open(ctx);
+}
+
+function showError(e: unknown) {
+  console.error(e);
+  $("error").textContent =
+    e instanceof DOMException && e.name === "NotAllowedError"
+      ? "マイクの使用を許可してください。"
+      : `開始できませんでした: ${e}`;
+}
+
+// --- Tuner ---
+
+let tuner: Tuner | null = null;
+
+$("openTuner").onclick = async () => {
+  $("error").textContent = "";
+  try {
+    await openAudio();
+  } catch (e) {
+    showError(e);
+    return;
+  }
+  tuner = new Tuner(
+    {
+      note: $("tunerNote"),
+      cents: $("tunerCents"),
+      needle: $("tunerNeedle"),
+      zone: $("tunerZone"),
+      canvas: $<HTMLCanvasElement>("tunerGraph"),
+    },
+    prefs.tolerance,
+  );
+  $("setup").hidden = true;
+  $("tuner").hidden = false;
+  tuner.start();
+  tracker!.onSample = (s) => tuner?.push(s);
+  tracker!.start();
+  void requestWakeLock();
+};
+
+$("closeTuner").onclick = () => {
+  tuner?.stop();
+  tuner = null;
+  tracker?.stop();
+  void wakeLock?.release();
+  wakeLock = null;
+  $("tuner").hidden = true;
+  $("setup").hidden = false;
 };
 
 $("stop").onclick = () => end();
@@ -217,7 +266,7 @@ async function requestWakeLock() {
 
 document.addEventListener("visibilitychange", () => {
   // The lock is released whenever the page is hidden; take it again on return.
-  if (document.visibilityState === "visible" && trainer) void requestWakeLock();
+  if (document.visibilityState === "visible" && (trainer || tuner)) void requestWakeLock();
 });
 
 function onSample(s: PitchSample) {

@@ -123,6 +123,12 @@ button.primary {
   color: #fff;
 }
 
+button.secondary {
+  width: 100%;
+  margin-top: 10px;
+  padding: 14px;
+}
+
 button.primary:disabled {
   opacity: 0.6;
 }
@@ -252,7 +258,34 @@ canvas {
   border-radius: 10px;
 }
 
-#stop {
+canvas.tall {
+  height: min(55vh, 460px);
+}
+
+.tuner-note {
+  text-align: center;
+  margin: 12px 0 16px;
+}
+
+#tunerNote {
+  font-size: 4rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+#tunerNote.idle {
+  opacity: 0.35;
+}
+
+.tuner-cents {
+  color: var(--muted);
+  font-size: 1.1rem;
+  min-height: 1.4em;
+  font-variant-numeric: tabular-nums;
+}
+
+#stop,
+#closeTuner {
   width: 100%;
   padding: 14px;
 }

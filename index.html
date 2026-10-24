@@ -45,6 +45,7 @@
 
       <p class="hint" id="hint"></p>
       <button id="start" class="primary">スタート</button>
+      <button id="openTuner" class="secondary">チューナー</button>
       <p class="error" id="error"></p>
     </main>
 
@@ -65,6 +66,21 @@
       </div>
       <canvas id="graph"></canvas>
       <button id="stop">やめる</button>
+    </main>
+
+    <main id="tuner" class="screen" hidden>
+      <div class="tuner-note">
+        <div id="tunerNote">–</div>
+        <div id="tunerCents" class="tuner-cents"></div>
+      </div>
+      <div class="meter">
+        <div class="zone" id="tunerZone"></div>
+        <div class="center"></div>
+        <div class="needle" id="tunerNeedle"></div>
+        <span class="flat">♭</span><span class="sharp">♯</span>
+      </div>
+      <canvas id="tunerGraph" class="tall"></canvas>
+      <button id="closeTuner">もどる</button>
     </main>
 
     <script type="module" src="./src/main.ts"></script>
