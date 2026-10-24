@@ -4,7 +4,8 @@ import type { PitchTracker } from "../pitch";
 import { midiName } from "../theory";
 import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs } from "../ui";
 import { HOP } from "./analyze";
-import { analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
+import { ANALYSIS_RATE, analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
+import { soundRange } from "./trim";
 import { melodyToMidi } from "./midi";
 import { KaraokePlayer } from "./player";
 import { parseSong, serializeSong, type Song } from "./song";
@@ -128,7 +129,10 @@ async function analyzeAudio(file: File) {
   updateButtons();
   try {
     status("読み込み中…");
-    const { samples, duration } = await decodeForAnalysis(audioFiles.get(file.name)!);
+    const decodedAudio = await decodeForAnalysis(audioFiles.get(file.name)!);
+    // Skip silence at either end; playback then starts the file at `audioStart`.
+    const { start, end } = soundRange(decodedAudio.samples, ANALYSIS_RATE);
+    const samples = decodedAudio.samples.slice(Math.round(start * ANALYSIS_RATE), Math.round(end * ANALYSIS_RATE));
     job = analyzeInWorker(samples, (r) => status(`解析中… ${Math.round(r * 100)}%`));
     const result = await job.promise;
     job = null;
@@ -141,13 +145,15 @@ async function analyzeAudio(file: File) {
       version: 1,
       title: file.name.replace(/\.[^.]+$/, ""),
       audioName: file.name,
-      duration,
+      ...(start > 0 ? { audioStart: Math.round(start * 1000) / 1000 } : {}),
+      duration: end - start,
       hop: HOP,
       offsetCents: result.offsetCents,
       notes: result.notes,
       contour: result.contour,
     };
-    status(describe(song));
+    const cut = [start > 0.05 && `前 ${start.toFixed(1)}秒`, decodedAudio.duration - end > 0.05 && `後ろ ${(decodedAudio.duration - end).toFixed(1)}秒`].filter(Boolean);
+    status(describe(song) + (cut.length ? `\n無音をカットしました（${cut.join("・")}）` : ""));
   } catch (e) {
     if (e instanceof Error && e.message === "cancelled") return;
     status("");
@@ -202,7 +208,12 @@ async function sing() {
       if (!decoded.has(name)) decoded.set(name, await a.ctx.decodeAudioData(audioFiles.get(name)!.slice(0)));
       return decoded.get(name)!;
     };
-    const tracks = { voice: await load(song.vocalsFile ?? song.audioName), inst: await load(song.instFile) };
+    const tracks = {
+      voice: await load(song.vocalsFile ?? song.audioName),
+      // Only the original file may have skipped silence; CLI tracks are already trimmed.
+      voiceOffset: song.vocalsFile ? 0 : (song.audioStart ?? 0),
+      inst: await load(song.instFile),
+    };
     player = new KaraokePlayer(a.ctx, song, tracks, {
       play: { inst: prefs.playInst, voice: prefs.playVoice, melody: prefs.playMelody },
       octave: prefs.octave,

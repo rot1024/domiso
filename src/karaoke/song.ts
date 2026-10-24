@@ -12,6 +12,11 @@ export interface Song {
   title: string;
   /** File name of the audio this was made from, to warn when opened with a different file. */
   audioName: string;
+  /**
+   * Where song time 0 is in the `audioName` file, in seconds, when silence at its start was skipped.
+   * Tracks written by the CLI are already trimmed and start at 0.
+   */
+  audioStart?: number;
   /** File name of the separated vocal track, when the CLI made one (played as the reference voice). */
   vocalsFile?: string;
   /** File name of the instrumental track, when there is one (played as the backing track). */
@@ -41,6 +46,7 @@ export function parseSong(text: string): Song {
   for (const k of ["vocalsFile", "instFile"]) {
     if (d[k] !== undefined && typeof d[k] !== "string") throw new Error("解析データが壊れています");
   }
+  if (d.audioStart !== undefined && typeof d.audioStart !== "number") throw new Error("解析データが壊れています");
   for (const n of d.notes) {
     if (typeof n?.start !== "number" || typeof n?.end !== "number" || typeof n?.midi !== "number") {
       throw new Error("解析データが壊れています");

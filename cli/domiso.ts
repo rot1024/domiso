@@ -2,6 +2,7 @@
 //
 //   pnpm cli <song> [--inst <instrumental>] [-o <dir>] [--title <title>] [--model <file>]
 //
+// 0. Cuts silence at the start and end of the song
 // 1. Separates the vocals with an AI model (audio-separator), and the instrumental too unless --inst is given
 // 2. With --inst, aligns the official instrumental to the song and uses it as the backing track
 // 3. Analyzes the vocals into semitone bars with the same code the app uses
@@ -13,6 +14,7 @@ import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { analyze, HOP } from "../src/karaoke/analyze";
 import { melodyToMidi } from "../src/karaoke/midi";
+import { soundRange } from "../src/karaoke/trim";
 import { serializeSong, type Song } from "../src/karaoke/song";
 import { alignmentLag } from "./align";
 
@@ -29,6 +31,7 @@ const USAGE = `使い方: pnpm cli <曲の音声> [オプション]
   --model-dir <dir>    モデルの保存先（既定: ~/.cache/domiso/models）
   --separator <cmd>    audio-separator コマンド（既定: audio-separator）
   --bitrate <rate>     AAC のビットレート（既定: 192k）
+  --no-trim            前後の無音をカットしない
   -h, --help           このヘルプ`;
 
 function main() {
@@ -42,6 +45,7 @@ function main() {
       "model-dir": { type: "string", default: join(homedir(), ".cache", "domiso", "models") },
       separator: { type: "string", default: "audio-separator" },
       bitrate: { type: "string", default: "192k" },
+      "no-trim": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -63,10 +67,25 @@ function main() {
   const started = Date.now();
 
   try {
+    // 0. Silence. Everything after works on the trimmed song, so all outputs share one timeline.
+    let source = input;
+    let audioStart = 0;
+    if (!values["no-trim"]) {
+      const mono = decodeMono(input, ALIGN_RATE, work);
+      const total = mono.length / ALIGN_RATE;
+      const { start, end } = soundRange(mono, ALIGN_RATE);
+      if (start > 0.05 || total - end > 0.05) {
+        step(`前後の無音をカット（前 ${start.toFixed(1)}秒・後ろ ${(total - end).toFixed(1)}秒）`);
+        source = join(work, "trimmed.wav");
+        run("ffmpeg", ["-y", "-v", "error", "-i", input, "-af", `atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS`, "-c:a", "pcm_f32le", source]);
+        audioStart = start;
+      }
+    }
+
     // 1. Separation. Model stems are named differently ("Instrumental" or "Other"); map both to inst.
     step(`ボーカルを分離中（${values.model}）`);
     const sepArgs = [
-      input,
+      source,
       "-m", values.model,
       "--model_file_dir", values["model-dir"],
       "--output_dir", work,
@@ -82,7 +101,7 @@ function main() {
     let instWav = join(work, "inst.wav");
     if (values.inst) {
       step("インストの位置を合わせています");
-      instWav = alignInstrumental(resolve(values.inst), input, work);
+      instWav = alignInstrumental(resolve(values.inst), source, work);
     } else if (!existsSync(instWav)) {
       fail("分離結果のインストが見つかりません。--inst でインスト音源を指定してください");
     }
@@ -104,6 +123,7 @@ function main() {
       version: 1,
       title,
       audioName: basename(input),
+      ...(audioStart ? { audioStart: Math.round(audioStart * 1000) / 1000 } : {}),
       vocalsFile,
       instFile,
       duration: samples.length / ANALYSIS_RATE,

@@ -15,6 +15,8 @@ export interface Playback {
 export interface Tracks {
   /** The reference singer (the original vocal recording, or a separated vocal track). */
   voice: AudioBuffer | null;
+  /** Where song time 0 is in the voice buffer, when silence at its start was skipped. */
+  voiceOffset: number;
   /** The backing track. */
   inst: AudioBuffer | null;
 }
@@ -87,8 +89,7 @@ export class KaraokePlayer {
   }
 
   get duration(): number {
-    const durations = [this.tracks.voice, this.tracks.inst].filter((b) => b !== null).map((b) => b.duration);
-    return durations.length ? Math.max(...durations) : this.song.duration;
+    return this.song.duration;
   }
 
   get isPlaying(): boolean {
@@ -119,8 +120,8 @@ export class KaraokePlayer {
     const { play } = this.opts;
     const { voice, inst } = this.tracks;
     const instOn = play.inst && !!inst;
-    if (instOn) this.startTrack(inst!, at, 1);
-    if (play.voice && voice) this.startTrack(voice, at, instOn ? VOICE_GAIN_UNDER_INST : 1);
+    if (instOn) this.startTrack(inst!, at, 1, 0);
+    if (play.voice && voice) this.startTrack(voice, at, instOn ? VOICE_GAIN_UNDER_INST : 1, this.tracks.voiceOffset);
     // Without the reference recording, the guide melody carries the tune instead.
     if (play.melody || (play.voice && !voice)) {
       this.melodyOut = this.ctx.createGain();
@@ -132,13 +133,13 @@ export class KaraokePlayer {
     this.tick();
   }
 
-  private startTrack(buffer: AudioBuffer, at: number, gain: number) {
+  private startTrack(buffer: AudioBuffer, at: number, gain: number, offset: number) {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     const g = this.ctx.createGain();
     g.gain.value = gain;
     src.connect(g).connect(this.ctx.destination);
-    src.start(at, this.pausedAt);
+    src.start(at, offset + this.pausedAt, this.duration - this.pausedAt);
     this.sources.push(src);
   }
 

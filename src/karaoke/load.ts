@@ -1,7 +1,7 @@
 import type { Analysis } from "./analyze";
 
 /** Analysis doesn't need more bandwidth than this, and a lower rate keeps long songs light on phones. */
-const ANALYSIS_RATE = 22050;
+export const ANALYSIS_RATE = 22050;
 
 /** Decodes audio straight to mono at the analysis rate. */
 export async function decodeForAnalysis(data: ArrayBuffer): Promise<{ samples: Float32Array; duration: number }> {
