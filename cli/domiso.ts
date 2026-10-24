@@ -1,6 +1,7 @@
 // domiso CLI: turns a song into karaoke data for the domiso app.
 //
 //   pnpm cli <song> [--inst <instrumental>] [-o <dir>] [--title <title>] [--model <file>]
+//   pnpm cli record [--process]   (records what the computer plays; see cli/record.ts)
 //
 // 0. Cuts silence at the start and end of the song
 // 1. Separates the vocals with an AI model (audio-separator), and the instrumental too unless --inst is given
@@ -8,6 +9,7 @@
 // 3. Analyzes the vocals into semitone bars with the same code the app uses
 // 4. Writes <title>.domiso.json; vocals, instrumental and the trimmed original as AAC (.m4a); the guide melody as MIDI
 import { spawnSync } from "node:child_process";
+import { recordCommand } from "./record";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
@@ -23,6 +25,7 @@ const ALIGN_RATE = 11025;
 const DEFAULT_MODEL = "vocals_mel_band_roformer.ckpt";
 
 const USAGE = `使い方: pnpm cli <曲の音声> [オプション]
+       pnpm cli record [オプション]   PC で再生している音を録音（詳しくは pnpm cli record --help）
 
   --inst <file>        公式のインスト音源。指定すると AI 分離のインストの代わりに伴奏として使う
   -o, --out <dir>      出力先（既定: ./<タイトル>）
@@ -54,14 +57,14 @@ function main() {
     process.exit(values.help ? 0 : 1);
   }
 
-  const input = resolve(positionals[0]);
+  const input = userPath(positionals[0]);
   if (!existsSync(input)) fail(`ファイルがありません: ${input}`);
-  if (values.inst && !existsSync(values.inst)) fail(`ファイルがありません: ${values.inst}`);
+  if (values.inst && !existsSync(userPath(values.inst))) fail(`ファイルがありません: ${values.inst}`);
   requireCommand("ffmpeg", ["-version"]);
   requireCommand(values.separator, ["--version"]);
 
   const title = values.title ?? basename(input, extname(input));
-  const outDir = resolve(values.out ?? title);
+  const outDir = userPath(values.out ?? title);
   mkdirSync(outDir, { recursive: true });
   const work = mkdtempSync(join(tmpdir(), "domiso-"));
   const started = Date.now();
@@ -101,7 +104,7 @@ function main() {
     let instWav = join(work, "inst.wav");
     if (values.inst) {
       step("インストの位置を合わせています");
-      instWav = alignInstrumental(resolve(values.inst), source, work);
+      instWav = alignInstrumental(userPath(values.inst), source, work);
     } else if (!existsSync(instWav)) {
       fail("分離結果のインストが見つかりません。--inst でインスト音源を指定してください");
     }
@@ -170,6 +173,14 @@ function alignInstrumental(inst: string, song: string, work: string): string {
   return out;
 }
 
+/**
+ * Resolves a path the user typed. `pnpm cli` runs in the package directory, so relative paths are taken
+ * from where the command was started (INIT_CWD) instead.
+ */
+export function userPath(p: string): string {
+  return resolve(process.env.INIT_CWD ?? process.cwd(), p);
+}
+
 function decodeMono(file: string, rate: number, work: string): Float32Array {
   const raw = join(work, "pcm.f32");
   run("ffmpeg", ["-y", "-v", "error", "-i", file, "-ac", "1", "-ar", String(rate), "-f", "f32le", raw]);
@@ -212,4 +223,12 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-main();
+if (process.argv[2] === "record") {
+  void recordCommand(process.argv.slice(3), userPath, (file, extra) => {
+    // Run the regular pipeline in a fresh process, exactly as `pnpm cli <file>` would.
+    const r = spawnSync(process.execPath, [...process.execArgv, process.argv[1], file, ...extra], { stdio: "inherit" });
+    process.exit(r.status ?? 1);
+  });
+} else {
+  main();
+}

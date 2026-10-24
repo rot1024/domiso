@@ -71,6 +71,23 @@ venv を有効にしていない場合は `--separator ~/.venvs/domiso/bin/audio
 初回はモデル（数百MB）を `~/.cache/domiso/models` にダウンロードする。
 RTX 5060 Ti では 3分45秒の曲が約30秒で終わる（BS-RoFormer は `--model model_bs_roformer_ep_317_sdr_12.9755.ckpt`。精度はほぼ同じで約5倍遅い）。
 
+### 再生中の音を録音する
+
+```sh
+pnpm cli record                 # 鳴り始めを待って録音し、無音が5秒続いたら自動で止めて WAV に保存
+pnpm cli record --process       # 録音後、そのまま分離・解析まで（出力は録音ファイルの隣の <曲名>/）
+pnpm cli record --probe         # 音を流しながら実行すると、再生音が来ている録音デバイスを選んで覚える
+```
+
+前後の無音はカットして保存する（前 0.2秒・後ろ 0.5秒の余白は残す）。Ctrl+C でもその時点までを保存する。
+`--silence <秒>`、`--threshold <dB>`（既定 50 = -50 dBFS）、`--max <秒>`、`-o <ファイル>` で調整できる。
+
+- Windows（WSL を含む）: Windows 側の `ffmpeg.exe` で DirectShow から録音する。ffmpeg は Windows の再生音を
+  直接は録れないので、再生音が流れ込む録音デバイスが必要（Voicemeeter の B1、VB-Cable の CABLE Output、
+  ステレオ ミキサーなど）。設定方法は `--probe` が案内する
+- Linux: PulseAudio / PipeWire の既定の出力のモニター（`@DEFAULT_MONITOR@`）を録音する。WSL で Linux アプリの
+  音を録りたいときは `--backend pulse`
+
 ## 開発
 
 ```sh
