@@ -24,7 +24,8 @@ export interface Analysis {
   contour: (number | null)[];
   /**
    * Seconds per contour frame. Frames step by a whole number of samples, so this is close to HOP but
-   * not equal (220 samples at 22050 Hz is 9.977 ms): using HOP would drift 0.23 %, 0.4 s by 3 minutes.
+   * not equal (22050 Hz × 10 ms = 220.5, rounded to 221 samples = 10.023 ms): using HOP would put
+   * notes 0.23 % early, 0.4 s by 3 minutes.
    */
   hop: number;
   /** Set when the notes were snapped to a beat grid. */
