@@ -15,9 +15,11 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { analyze, HOP } from "../src/karaoke/analyze";
+import { analyze } from "../src/karaoke/analyze";
 import { encodeWav, renderMelody } from "../src/karaoke/melody";
 import { melodyToMidi } from "../src/karaoke/midi";
+import { applyGrid } from "../src/karaoke/grid";
+import { detectBeats } from "../src/karaoke/tempo";
 import { soundRange } from "../src/karaoke/trim";
 import { serializeSong, type Song } from "../src/karaoke/song";
 import { alignmentLag } from "./align";
@@ -46,6 +48,7 @@ const USAGE = `使い方: pnpm cli <曲の音声> [オプション]
   --separator <cmd>    audio-separator コマンド（既定: uv で cli/separator の環境から実行）
   --bitrate <rate>     AAC のビットレート（既定: 192k）
   --no-trim            前後の無音をカットしない
+  --grid <16|8|off>    音符を拍のマス目に合わせる細かさ（既定: 16 = 16分音符程度。off で声のとおり）
   -h, --help           このヘルプ`;
 
 function main() {
@@ -60,6 +63,7 @@ function main() {
       separator: { type: "string" },
       bitrate: { type: "string", default: "192k" },
       "no-trim": { type: "boolean" },
+      grid: { type: "string", default: "16" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -127,6 +131,21 @@ function main() {
     const samples = decodeMono(vocalsWav, ANALYSIS_RATE, work);
     const result = analyze(samples, ANALYSIS_RATE);
     if (!result.notes.length) fail("声が見つかりませんでした");
+    // The beat comes from the whole song: drums and bass mark it far more clearly than the voice.
+    let tempo: Song["tempo"];
+    if (values.grid !== "off") {
+      if (values.grid !== "16" && values.grid !== "8") fail(`--grid は 16、8、off のどれかです: ${values.grid}`);
+      step("テンポを検出して、音符を拍に合わせています");
+      const beats = detectBeats(decodeMono(source, ANALYSIS_RATE, work), ANALYSIS_RATE);
+      const grid = applyGrid(result.notes, beats, samples.length / ANALYSIS_RATE, values.grid);
+      if (grid) {
+        console.log(`  テンポ ${beats.bpm} BPM・1拍を${grid.tempo.division}等分・音符 ${result.notes.length} → ${grid.notes.length} 個`);
+        result.notes = grid.notes;
+        tempo = grid.tempo;
+      } else {
+        console.warn("  拍がはっきりしないので、音符は声のとおりにします");
+      }
+    }
 
     // 4. Output.
     step("書き出し中");
@@ -146,8 +165,9 @@ function main() {
       instFile,
       originalFile,
       duration: samples.length / ANALYSIS_RATE,
-      hop: HOP,
+      hop: result.hop,
       offsetCents: result.offsetCents,
+      ...(tempo ? { tempo } : {}),
       notes: result.notes,
       contour: result.contour,
     };
@@ -161,7 +181,7 @@ function main() {
     writeFileSync(guideWav, encodeWav(renderMelody(result.notes, 44100, song.duration, result.offsetCents), 44100));
     encodeAac(guideWav, join(outDir, guideFile), values.bitrate);
 
-    const voiced = result.contour.filter((m) => m !== null).length * HOP;
+    const voiced = result.contour.filter((m) => m !== null).length * result.hop;
     console.log(`
 完了（${((Date.now() - started) / 1000).toFixed(0)}秒）: ${outDir}
   ${jsonFile}  音符 ${result.notes.length} 個・声 ${voiced.toFixed(0)}秒 / ${song.duration.toFixed(0)}秒・全体のずれ ${result.offsetCents}¢

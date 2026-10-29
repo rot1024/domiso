@@ -3,7 +3,6 @@ import { solfege } from "../graph";
 import type { PitchTracker } from "../pitch";
 import { midiName } from "../theory";
 import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs, showScreen } from "../ui";
-import { HOP } from "./analyze";
 import { ANALYSIS_RATE, analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
 import { soundRange } from "./trim";
 import { encodeWav, renderMelody } from "./melody";
@@ -254,8 +253,9 @@ async function analyzeAudio(file: File) {
       audioName: file.name,
       ...(start > 0 ? { audioStart: Math.round(start * 1000) / 1000 } : {}),
       duration: end - start,
-      hop: HOP,
+      hop: result.hop,
       offsetCents: result.offsetCents,
+      ...(result.tempo ? { tempo: result.tempo } : {}),
       notes: result.notes,
       contour: result.contour,
     };

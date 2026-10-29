@@ -23,6 +23,8 @@ export interface Song {
   instFile?: string;
   /** File name of the original song cut to the same timeline, when the CLI made one. */
   originalFile?: string;
+  /** Detected tempo and beat times (seconds); notes are snapped to `division` cells per beat. */
+  tempo?: { bpm: number; beats: number[]; division: number };
   duration: number;
   /** Contour resolution in seconds. */
   hop: number;
@@ -35,9 +37,11 @@ export interface Song {
 export function serializeSong(song: Song): string {
   // One note per line keeps the file readable and diffable without bloating the contour.
   const notes = song.notes.map((n) => "    " + JSON.stringify(n)).join(",\n");
-  const { notes: _n, contour, ...meta } = song;
+  const { notes: _n, contour, tempo, ...meta } = song;
   const head = JSON.stringify(meta, null, 2).slice(0, -2);
-  return `${head},\n  "notes": [\n${notes}\n  ],\n  "contour": ${JSON.stringify(contour)}\n}\n`;
+  // Hundreds of beat times stay on one line, like the contour.
+  const beats = tempo ? `,\n  "tempo": ${JSON.stringify(tempo)}` : "";
+  return `${head}${beats},\n  "notes": [\n${notes}\n  ],\n  "contour": ${JSON.stringify(contour)}\n}\n`;
 }
 
 export function parseSong(text: string): Song {
@@ -49,6 +53,9 @@ export function parseSong(text: string): Song {
     if (d[k] !== undefined && typeof d[k] !== "string") throw new Error("解析データが壊れています");
   }
   if (d.audioStart !== undefined && typeof d.audioStart !== "number") throw new Error("解析データが壊れています");
+  if (d.tempo !== undefined && (typeof d.tempo?.bpm !== "number" || !Array.isArray(d.tempo.beats))) {
+    throw new Error("解析データが壊れています");
+  }
   for (const n of d.notes) {
     if (typeof n?.start !== "number" || typeof n?.end !== "number" || typeof n?.midi !== "number") {
       throw new Error("解析データが壊れています");

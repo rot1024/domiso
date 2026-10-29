@@ -49,6 +49,20 @@ export class KaraokeView {
 
     drawSemitoneGrid(g, w, y, lo, lo + HALF_SPAN * 2, dpr);
 
+    // Beats, when the song has them: the bars sit on this grid.
+    const beats = p.song.tempo?.beats;
+    if (beats) {
+      g.strokeStyle = "rgba(255,255,255,0.08)";
+      g.lineWidth = dpr;
+      g.beginPath();
+      for (const b of beats) {
+        if (b < now - PAST || b > now + FUTURE) continue;
+        g.moveTo(x(b), 0);
+        g.lineTo(x(b), h);
+      }
+      g.stroke();
+    }
+
     // Bars: upcoming in blue, the current one brighter, finished ones green or red by how well they went.
     const tol = this.opts.tolerance / 100;
     p.notes.forEach((n, i) => {

@@ -20,8 +20,15 @@ const SWITCH_FRAMES = 6;
 const MIN_NOTE_SEC = 0.08;
 
 export interface Analysis {
-  /** MIDI pitch per HOP, null where there is no voice. Not offset-corrected. */
+  /** MIDI pitch per frame (see `hop`), null where there is no voice. Not offset-corrected. */
   contour: (number | null)[];
+  /**
+   * Seconds per contour frame. Frames step by a whole number of samples, so this is close to HOP but
+   * not equal (220 samples at 22050 Hz is 9.977 ms): using HOP would drift 0.23 %, 0.4 s by 3 minutes.
+   */
+  hop: number;
+  /** Set when the notes were snapped to a beat grid. */
+  tempo?: { bpm: number; beats: number[]; division: number };
   /** How far the whole recording sits from equal temperament (A=440), in cents. */
   offsetCents: number;
   notes: SongNote[];
@@ -29,11 +36,14 @@ export interface Analysis {
 
 /** Turns a mono vocal recording into a pitch contour and semitone-quantized notes. */
 export function analyze(samples: Float32Array, sampleRate: number, onProgress?: (ratio: number) => void): Analysis {
-  const raw = detect(samples, sampleRate, onProgress);
+  const hop = Math.round(sampleRate * HOP) / sampleRate;
+  // A frame's pitch belongs to its window's middle: pad the front so index × hop is that time.
+  const pad = Math.round(FRAME / 2 / sampleRate / hop);
+  const raw = [...new Array<null>(pad).fill(null), ...detect(samples, sampleRate, onProgress)];
   const contour = bridgeGaps(medianFilter(raw));
   const offsetCents = tuningOffset(contour);
-  const notes = segment(contour, offsetCents / 100);
-  return { contour: contour.map((m) => (m === null ? null : Math.round(m * 100) / 100)), offsetCents, notes };
+  const notes = segment(contour, offsetCents / 100, hop);
+  return { contour: contour.map((m) => (m === null ? null : Math.round(m * 100) / 100)), hop, offsetCents, notes };
 }
 
 function detect(samples: Float32Array, sampleRate: number, onProgress?: (ratio: number) => void): (number | null)[] {
@@ -112,7 +122,7 @@ export function tuningOffset(contour: (number | null)[]): number {
 }
 
 /** Splits voiced runs into notes with hysteresis, then snaps each note to a semitone. */
-export function segment(contour: (number | null)[], offsetSemis: number): SongNote[] {
+export function segment(contour: (number | null)[], offsetSemis: number, hop = HOP): SongNote[] {
   const notes: SongNote[] = [];
   let start = -1;
   let cur = 0;
@@ -120,8 +130,8 @@ export function segment(contour: (number | null)[], offsetSemis: number): SongNo
   const close = (end: number) => {
     if (start < 0) return;
     const pitches = contour.slice(start, end).filter((m): m is number => m !== null);
-    if (pitches.length && (end - start) * HOP >= MIN_NOTE_SEC) {
-      notes.push({ start: start * HOP, end: end * HOP, midi: Math.round(median(pitches) - offsetSemis) });
+    if (pitches.length && (end - start) * hop >= MIN_NOTE_SEC) {
+      notes.push({ start: start * hop, end: end * hop, midi: Math.round(median(pitches) - offsetSemis) });
     }
     start = -1;
   };
