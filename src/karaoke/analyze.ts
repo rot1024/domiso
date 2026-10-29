@@ -2,6 +2,7 @@ import { PitchDetector } from "pitchy";
 import { freqToMidi } from "../theory";
 import { fixSubharmonic, median } from "../pitch";
 import type { SongNote } from "./song";
+import { splitAtOnsets, syllableOnsets } from "./syllables";
 
 /** Analysis frame step in seconds. The contour is stored at this resolution. */
 export const HOP = 0.01;
@@ -43,7 +44,8 @@ export function analyze(samples: Float32Array, sampleRate: number, onProgress?: 
   const raw = [...new Array<null>(pad).fill(null), ...detect(samples, sampleRate, onProgress)];
   const contour = bridgeGaps(medianFilter(raw));
   const offsetCents = tuningOffset(contour);
-  const notes = segment(contour, offsetCents / 100, hop);
+  // Pitch alone joins a repeated note into one; syllable onsets split it where it is sung again.
+  const notes = splitAtOnsets(segment(contour, offsetCents / 100, hop), syllableOnsets(samples, sampleRate));
   return { contour: contour.map((m) => (m === null ? null : Math.round(m * 100) / 100)), hop, offsetCents, notes };
 }
 

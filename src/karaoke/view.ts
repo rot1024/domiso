@@ -76,7 +76,8 @@ export class KaraokeView {
       else fill = active ? "rgba(91,140,255,0.75)" : "rgba(91,140,255,0.4)";
       g.fillStyle = fill;
       const top = y(n.midi + BAR_HEIGHT / 2);
-      roundRect(g, x0, top, Math.max(2 * dpr, x1 - x0), y(n.midi - BAR_HEIGHT / 2) - top, 4 * dpr);
+      // A small gap at the end, so a pitch sung again right after shows as its own bar.
+      roundRect(g, x0, top, Math.max(2 * dpr, x1 - x0 - 2 * dpr), y(n.midi - BAR_HEIGHT / 2) - top, 4 * dpr);
       g.fill();
       // A faint band shows how far off still counts as in tune.
       if (active) {

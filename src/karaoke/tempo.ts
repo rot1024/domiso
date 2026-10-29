@@ -65,6 +65,9 @@ export function onsetEnvelope(samples: Float32Array, rate: number): Float32Array
 
 const frameHop = (rate: number) => Math.round(rate * STEP);
 
+/** Time of an onset envelope frame: its flux peaks when an onset is about three quarters into the window. */
+export const onsetTime = (frame: number, rate: number) => (frame * frameHop(rate) + 0.75 * FFT_SIZE) / rate;
+
 /** The beat period (frames) from the envelope's autocorrelation, weighted toward common tempos. */
 function beatPeriod(env: Float32Array, fps: number): { period: number; strength: number } {
   const lo = Math.floor((60 / MAX_BPM) * fps);
@@ -143,8 +146,6 @@ export function detectBeats(samples: Float32Array, rate: number): Beats {
   const frameSec = frameHop(rate) / rate;
   const { period, strength } = beatPeriod(env, 1 / frameSec);
   const frames = trackBeats(env, period);
-  // A frame's flux peaks when an onset is about three quarters into its window, not at its start.
-  const lag = (0.75 * FFT_SIZE) / rate;
-  const time = (f: number) => Math.round((f * frameSec + lag) * 1000) / 1000;
+  const time = (f: number) => Math.round(onsetTime(f, rate) * 1000) / 1000;
   return { bpm: Math.round((60 / (period * frameSec)) * 10) / 10, beats: frames.map(time), strength };
 }
