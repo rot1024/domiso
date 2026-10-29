@@ -33,6 +33,7 @@ const base: Settings = {
   speech: false,
   octaveFree: false,
   slide: false,
+  pattern: "triad",
 };
 
 /**
@@ -72,6 +73,26 @@ describe("Trainer", () => {
     sing(trainer, (s) => s.target);
     await runToEnd(trainer);
     expect(trainer.state).toMatchObject({ phase: "done", passed: 5, attempted: 5 });
+  });
+
+  it("sings ドレミファソファミレド over the chord with the five-note pattern", async () => {
+    const trainer = new Trainer(fakeSound(), { ...base, pattern: "five" });
+    const sung: number[] = [];
+    sing(trainer, (s) => {
+      if (sung[sung.length - 1] !== s.target) sung.push(s.target!);
+      return s.target;
+    });
+    await runToEnd(trainer);
+    expect(trainer.state).toMatchObject({ phase: "done", passed: 9, attempted: 9 });
+    expect(sung).toEqual([60, 62, 64, 65, 67, 65, 64, 62, 60]);
+    expect(trainer.state.labels).toEqual(["ド", "レ", "ミ", "ファ", "ソ"]);
+  });
+
+  it("slides through ドレミファソ in one breath", async () => {
+    const trainer = new Trainer(fakeSound(), { ...base, pattern: "five", slide: true });
+    sing(trainer, (s) => s.target);
+    const messages = await runToEnd(trainer);
+    expect(messages).toContain("全部一発! (8/8)");
   });
 
   it("does not pass notes held shorter than the hold time", async () => {

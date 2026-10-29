@@ -169,6 +169,19 @@ button.primary:disabled {
   color: var(--muted);
 }
 
+/* ドレミファソ goes up and back down in nine steps: smaller circles that wrap if needed. */
+.steps.many {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* 9 × 34 px + gaps fits one row on a 375 px wide phone. */
+.steps.many span {
+  width: 34px;
+  height: 34px;
+  font-size: 0.8rem;
+}
+
 .steps span.current {
   border-color: var(--accent);
   color: var(--text);

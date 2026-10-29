@@ -96,17 +96,41 @@ export function nextChord(progression: Progression, index: number, rand = Math.r
   }
 }
 
+/** What is sung over each chord: the triad (ドミソ) or the first five scale steps (ドレミファソ). */
+export type Pattern = "triad" | "five";
+
+/** The five steps above the root for each chord quality: major, natural minor, and minor with a flat 5th. */
+const FIVE: Record<ChordQuality, number[]> = {
+  maj: [0, 2, 4, 5, 7],
+  min: [0, 2, 3, 5, 7],
+  dim: [0, 2, 3, 5, 6],
+};
+
+/** MIDI notes to sing over the chord, low to high, voiced like chordTones. */
+export function patternTones(chord: Chord, home: number, pattern: Pattern): number[] {
+  if (pattern === "triad") return chordTones(chord, home);
+  const root = chordTones(chord, home)[0];
+  return FIVE[chord.quality].map((i) => root + i);
+}
+
+/** Movable-do names of the pattern's notes. */
+export function patternLabels(pattern: Pattern): string[] {
+  return pattern === "triad" ? ["ド", "ミ", "ソ"] : ["ド", "レ", "ミ", "ファ", "ソ"];
+}
+
 export type Order = "updown" | "up" | "random";
 
-/** Indices into the triad (0=root, 1=3rd, 2=5th) in singing order. */
-export function noteOrder(order: Order, rand = Math.random): number[] {
+/** Indices into the pattern's notes (0 = root) in singing order. */
+export function noteOrder(order: Order, count = 3, rand = Math.random): number[] {
+  const up = Array.from({ length: count }, (_, i) => i);
   switch (order) {
     case "updown":
-      return [0, 1, 2, 1, 0];
+      // Up and back down: ドミソミド, ドレミファソファミレド.
+      return [...up, ...up.slice(0, -1).reverse()];
     case "up":
-      return [0, 1, 2];
+      return up;
     case "random": {
-      const a = [0, 1, 2];
+      const a = [...up];
       for (let i = a.length - 1; i > 0; i--) {
         const j = Math.floor(rand() * (i + 1));
         [a[i], a[j]] = [a[j], a[i]];
@@ -116,4 +140,3 @@ export function noteOrder(order: Order, rand = Math.random): number[] {
   }
 }
 
-export const DEGREE_LABELS = ["ド", "ミ", "ソ"];

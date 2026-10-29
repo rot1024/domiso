@@ -7,11 +7,13 @@ import {
   chordName,
   chordReading,
   chordTones,
-  DEGREE_LABELS,
   nextChord,
   noteOrder,
+  patternLabels,
+  patternTones,
   type Chord,
   type Order,
+  type Pattern,
   type Progression,
 } from "./theory";
 
@@ -27,6 +29,8 @@ export interface Settings {
   holdMs: number;
   /** Number of chords per session; 0 means endless. */
   rounds: number;
+  /** ドミソ or ドレミファソ. */
+  pattern: Pattern;
   speech: boolean;
   octaveFree: boolean;
   /** Sing the whole pattern in one breath, sliding from note to note. */
@@ -89,6 +93,8 @@ export interface TrainerState {
   message: string;
   chord: string;
   tones: number[];
+  /** Names of the notes in `tones`, e.g. ド, ミ, ソ. */
+  labels: string[];
   order: number[];
   step: number;
   target: number | null;
@@ -127,6 +133,7 @@ export class Trainer {
       message: "",
       chord: "",
       tones: [],
+      labels: patternLabels(settings.pattern),
       order: [],
       step: 0,
       target: null,
@@ -167,8 +174,8 @@ export class Trainer {
     await this.say(this.settings.slide ? "はじめます。声を切らずに歌ってください" : "はじめます");
     for (let round = 0; rounds === 0 || round < rounds; round++) {
       const chord = nextChord(this.cfg.progression, round);
-      const tones = chordTones(chord, this.settings.home);
-      const order = noteOrder(this.cfg.order);
+      const tones = patternTones(chord, this.settings.home, this.settings.pattern);
+      const order = noteOrder(this.cfg.order, tones.length);
       this.set({ round: round + 1, chord: chordName(chord), tones, order, step: 0, target: null });
 
       await this.promptChord(chord, tones, round === 0);
@@ -292,7 +299,8 @@ export class Trainer {
     if (aid >= 3 || this.cfg.progression !== "fixed") await this.say(chordReading(chord));
     const now = this.sound.ctx.currentTime + 0.05;
     if (aid <= 2 || (aid === 4 && first)) {
-      this.sound.playChord(tones, now, 1.6);
+      // The chord itself is always the triad, whatever is sung over it.
+      this.sound.playChord(chordTones(chord, this.settings.home), now, 1.6);
       this.pianoUntil = now + 2.0;
       await this.wait(1.8);
     } else if (aid === 3) {
@@ -305,7 +313,7 @@ export class Trainer {
   private async promptNote(degree: number, step: number) {
     const aid = this.cfg.aid;
     const target = this.state.tones[degree];
-    this.set({ phase: "prompt", message: DEGREE_LABELS[degree] });
+    this.set({ phase: "prompt", message: this.state.labels[degree] });
     const now = this.sound.ctx.currentTime + 0.05;
     if (aid === 1) {
       this.sound.playNote(target, now, 1.0);
@@ -313,7 +321,7 @@ export class Trainer {
       await this.wait(1.4);
     } else if (aid >= 2 && step === 0 && this.cfg.order === "random") {
       // In random order the first note isn't implied, so name it.
-      await this.say(DEGREE_LABELS[degree]);
+      await this.say(this.state.labels[degree]);
     }
     if (aid !== 0) this.sound.cue();
   }
@@ -321,12 +329,12 @@ export class Trainer {
   /** Signals "move on" during a slide without stopping the singer. */
   private cueNext(degree: number, target: number) {
     const aid = this.cfg.aid;
-    this.set({ phase: "listen", message: `声を切らずに${DEGREE_LABELS[degree]}へ`, inTune: false });
+    this.set({ phase: "listen", message: `声を切らずに${this.state.labels[degree]}へ`, inTune: false });
     if (aid === 0) return; // listenSlide sounds the target itself.
     if (aid === 1) {
       this.sound.playNote(target, this.sound.ctx.currentTime, 0.7);
     } else if (this.cfg.order === "random") {
-      void this.sound.say(DEGREE_LABELS[degree]);
+      void this.sound.say(this.state.labels[degree]);
     } else {
       this.sound.cue();
     }
@@ -345,7 +353,7 @@ export class Trainer {
     let inSince: number | null = null;
     let lastStrike = -Infinity;
 
-    this.set({ phase: "listen", message: `${DEGREE_LABELS[degree]}を歌って`, inTune: false });
+    this.set({ phase: "listen", message: `${this.state.labels[degree]}を歌って`, inTune: false });
 
     return this.listenUntil(maxSec, start, (s, done) => {
       if (aid === 0) lastStrike = this.sustain(target, s.time, lastStrike);
@@ -449,7 +457,7 @@ export class Trainer {
 
   private async feedback(r: NoteResult) {
     this.sound.stopAll();
-    const label = DEGREE_LABELS[r.degree];
+    const label = this.state.labels[r.degree];
     const now = this.sound.ctx.currentTime + 0.05;
     if (r.passed) {
       this.set({ phase: "feedback", message: "OK!" });
@@ -501,7 +509,7 @@ export class Trainer {
     const misses = moves.filter((m) => !m.oneShot);
     const score = (m: SlideResult) => (!m.held ? 3000 : m.broke ? 2000 : 0) + Math.abs(m.landing ?? 0);
     const worst = misses.reduce((a, b) => (score(b) > score(a) ? b : a));
-    const label = DEGREE_LABELS[worst.degree];
+    const label = this.state.labels[worst.degree];
     let text: string;
     if (worst.broke) text = `${label}で声が途切れた`;
     else if (worst.landing === null) text = `${label}にたどり着けなかった`;
@@ -567,12 +575,12 @@ export class Trainer {
   /** Points out a consistent tendency, e.g. "ミが低めになりがち". */
   biasComment(): string | null {
     let worst: { label: string; bias: number } | null = null;
-    for (let d = 0; d < 3; d++) {
+    for (let d = 0; d < this.state.labels.length; d++) {
       const devs = this.results.filter((r) => r.degree === d).map((r) => r.onset);
       if (devs.length < 2) continue;
       const bias = devs.reduce((a, b) => a + b, 0) / devs.length;
       if (Math.abs(bias) >= 15 && (!worst || Math.abs(bias) > Math.abs(worst.bias))) {
-        worst = { label: DEGREE_LABELS[d], bias };
+        worst = { label: this.state.labels[d], bias };
       }
     }
     if (!worst) return null;

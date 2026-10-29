@@ -1,3 +1,4 @@
+import type { Pattern } from "./theory";
 import type { Mode } from "./trainer";
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -8,6 +9,8 @@ export interface Prefs {
   tolerance: number;
   holdMs: number;
   rounds: number;
+  /** ドミソ or ドレミファソ. */
+  pattern: Pattern;
   headphones: boolean;
   speech: boolean;
   octaveFree: boolean;
@@ -45,6 +48,7 @@ export const prefs: Prefs = {
   tolerance: 30,
   holdMs: 1000,
   rounds: 10,
+  pattern: "triad",
   headphones: true,
   speech: true,
   octaveFree: false,

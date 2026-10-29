@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsOff, chordName, chordTones, midiToFreq, noteOrder, VOICE_PRESETS } from "../src/theory";
+import { centsOff, chordName, chordTones, midiToFreq, noteOrder, patternLabels, patternTones, VOICE_PRESETS } from "../src/theory";
 
 describe("centsOff", () => {
   it("measures deviation from the target", () => {
@@ -35,5 +35,20 @@ describe("chordTones", () => {
 describe("noteOrder", () => {
   it("random order is a permutation of the triad", () => {
     for (let i = 0; i < 20; i++) expect([...noteOrder("random")].sort()).toEqual([0, 1, 2]);
+  });
+});
+
+describe("ドレミファソ", () => {
+  it("goes up five steps and back down", () => {
+    expect(noteOrder("updown", 5)).toEqual([0, 1, 2, 3, 4, 3, 2, 1, 0]);
+    expect([...noteOrder("random", 5)].sort()).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("uses the major, minor and diminished five-note shapes from the chord's root", () => {
+    expect(patternTones({ root: 0, quality: "maj" }, 60, "five")).toEqual([60, 62, 64, 65, 67]);
+    expect(patternTones({ root: 9, quality: "min" }, 60, "five")).toEqual([57, 59, 60, 62, 64]);
+    expect(patternTones({ root: 11, quality: "dim" }, 60, "five")).toEqual([59, 61, 62, 64, 65]);
+    expect(patternTones({ root: 0, quality: "maj" }, 60, "triad")).toEqual([60, 64, 67]);
+    expect(patternLabels("five")).toEqual(["ド", "レ", "ミ", "ファ", "ソ"]);
   });
 });

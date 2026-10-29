@@ -3,7 +3,7 @@ import { initKaraoke } from "./karaoke/screen";
 import type { PitchSample, PitchTracker } from "./pitch";
 import type { Sound } from "./sound";
 import { Tuner } from "./tuner";
-import { centsOff, DEGREE_LABELS, freqToMidi, midiName, midiToFreq, VOICE_PRESETS } from "./theory";
+import { centsOff, freqToMidi, midiName, midiToFreq, VOICE_PRESETS } from "./theory";
 import { AID_LABELS, MODES, Trainer, type Mode, type Settings, type TrainerState } from "./trainer";
 import { $, checkbox, choices, errorText, prefs, prefsListeners } from "./ui";
 
@@ -29,6 +29,10 @@ choices(
   "mode",
   (Object.keys(MODES) as Mode[]).map((m) => ({ value: m, label: MODES[m].label, sub: MODES[m].description })),
 );
+choices($("pattern"), "pattern", [
+  { value: "triad", label: "ドミソ" },
+  { value: "five", label: "ドレミファソ" },
+]);
 choices($("tolerance"), "tolerance", [
   { value: 50, label: "甘め ±50¢" },
   { value: 30, label: "ふつう ±30¢" },
@@ -179,10 +183,11 @@ function renderState(s: TrainerState) {
   $("message").textContent = s.message;
   $("aidLabel").textContent = `補助: ${AID_LABELS[s.aid]}`;
   $("score").textContent = `${s.round}${settings?.rounds ? `/${settings.rounds}` : ""}  ✓${s.passed}/${s.attempted}`;
+  $("steps").classList.toggle("many", s.order.length > 5);
   $("steps").replaceChildren(
     ...s.order.map((degree, i) => {
       const el = document.createElement("span");
-      el.textContent = DEGREE_LABELS[degree];
+      el.textContent = s.labels[degree];
       el.classList.toggle("done", i < s.step);
       el.classList.toggle("current", i === s.step && s.phase !== "done");
       el.classList.toggle("in-tune", i === s.step && s.inTune);
@@ -208,10 +213,10 @@ function draw() {
   const g = canvas.getContext("2d")!;
   g.clearRect(0, 0, w, h);
 
-  const { tones, target } = trainer.state;
+  const { tones, target, labels } = trainer.state;
   if (tones.length) {
-    const lo = tones[0] - 3;
-    const hi = tones[2] + 3;
+    const lo = Math.min(...tones) - 3;
+    const hi = Math.max(...tones) + 3;
     const y = (midi: number) => h - ((midi - lo) / (hi - lo)) * h;
     const tolSemis = settings!.tolerance / 100;
 
@@ -227,7 +232,7 @@ function draw() {
       g.stroke();
       g.fillStyle = active ? "#3ecf8e" : "#8b90a0";
       g.font = `${12 * dpr}px system-ui`;
-      g.fillText(`${DEGREE_LABELS[i]} ${midiName(m)}`, 6 * dpr, y(m) - 4 * dpr);
+      g.fillText(`${labels[i]} ${midiName(m)}`, 6 * dpr, y(m) - 4 * dpr);
     });
 
     const now = ctx.currentTime;
