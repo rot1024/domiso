@@ -2,7 +2,7 @@ import { keepAwake, openAudio } from "../audio";
 import { solfege } from "../graph";
 import type { PitchTracker } from "../pitch";
 import { midiName } from "../theory";
-import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs } from "../ui";
+import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs, showScreen } from "../ui";
 import { HOP } from "./analyze";
 import { ANALYSIS_RATE, analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
 import { soundRange } from "./trim";
@@ -82,7 +82,7 @@ export function initKaraoke() {
     song: () => song,
     media: mediaFor,
     back: () => {
-      show("karaokeSetup");
+      showScreen("karaokeSetup");
       void renderTakes();
     },
   });
@@ -90,7 +90,7 @@ export function initKaraoke() {
   initLesson({
     media: mediaFor,
     back: () => {
-      show("karaokeSetup");
+      showScreen("karaokeSetup");
       void renderTakes();
     },
   });
@@ -108,8 +108,8 @@ export function initKaraoke() {
   prefsListeners.push(syncLatency);
   syncLatency();
 
-  $("openKaraoke").onclick = () => show("karaokeSetup");
-  $("kBack").onclick = () => show("setup");
+  $("openKaraoke").onclick = () => showScreen("karaokeSetup");
+  $("kBack").onclick = () => showScreen("home");
   $<HTMLInputElement>("kFiles").onchange = (e) => {
     const input = e.target as HTMLInputElement;
     const files = [...(input.files ?? [])];
@@ -129,10 +129,6 @@ export function initKaraoke() {
   showSpeed();
 }
 
-function show(id: "setup" | "karaokeSetup" | "karaoke") {
-  for (const s of ["setup", "karaokeSetup", "karaoke", "replay", "lesson"]) $(s).hidden = s !== id;
-  window.scrollTo(0, 0);
-}
 
 function status(text: string) {
   $("kStatus").textContent = text;
@@ -361,7 +357,7 @@ async function sing() {
 
   $("kTitle").textContent = song.title;
   $("kResult").textContent = "";
-  show("karaoke");
+  showScreen("karaoke");
   player.onEnd = showResult;
   startRecording(sessionCtx);
   tracker.onSample = (s) => {
@@ -454,7 +450,7 @@ function endSinging() {
   view = null;
   tracker?.stop();
   keepAwake(false);
-  show("karaokeSetup");
+  showScreen("karaokeSetup");
 }
 
 /** Records your voice alongside the pitch, so the take can be replayed against the song. */

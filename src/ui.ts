@@ -3,6 +3,15 @@ import type { Mode } from "./trainer";
 
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
+const SCREENS = ["home", "setup", "practice", "tuner", "karaokeSetup", "karaoke", "replay", "lesson"] as const;
+export type Screen = (typeof SCREENS)[number];
+
+/** Shows one screen and hides the rest. */
+export function showScreen(id: Screen) {
+  for (const s of SCREENS) $(s).hidden = s !== id;
+  window.scrollTo(0, 0);
+}
+
 export interface Prefs {
   voice: string;
   mode: Mode;

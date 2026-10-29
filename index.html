@@ -8,17 +8,34 @@
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <main id="setup" class="screen">
+    <main id="home" class="screen">
       <h1>ドミソ音感トレーナー</h1>
+
+      <section>
+        <h2>ドミソ練習</h2>
+        <div class="modes" id="mode"></div>
+      </section>
+
+      <section>
+        <h2>そのほか</h2>
+        <div class="modes">
+          <button id="openTuner">チューナー<small>声の音程を見る</small></button>
+          <button id="openKaraoke">カラオケ<small>曲に合わせて歌う・苦手フレーズの練習</small></button>
+        </div>
+      </section>
+      <p class="error" id="homeError"></p>
+    </main>
+
+    <main id="setup" class="screen" hidden>
+      <header class="screen-head">
+        <button id="backHome" class="back">‹ もどる</button>
+      </header>
+      <h1 id="setupTitle"></h1>
+      <p class="hint" id="setupDescription"></p>
 
       <section>
         <h2>声域</h2>
         <div class="seg" id="voice"></div>
-      </section>
-
-      <section>
-        <h2>モード</h2>
-        <div class="modes" id="mode"></div>
       </section>
 
       <section>
@@ -50,8 +67,6 @@
 
       <p class="hint" id="hint"></p>
       <button id="start" class="primary">スタート</button>
-      <button id="openTuner" class="secondary">チューナー</button>
-      <button id="openKaraoke" class="secondary">カラオケ</button>
       <p class="error" id="error"></p>
     </main>
 

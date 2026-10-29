@@ -5,7 +5,7 @@ import type { Sound } from "./sound";
 import { Tuner } from "./tuner";
 import { centsOff, freqToMidi, midiName, midiToFreq, VOICE_PRESETS } from "./theory";
 import { AID_LABELS, MODES, Trainer, type Mode, type Settings, type TrainerState } from "./trainer";
-import { $, checkbox, choices, errorText, prefs, prefsListeners } from "./ui";
+import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs, showScreen } from "./ui";
 
 function updateHint() {
   const hint =
@@ -24,11 +24,26 @@ choices(
   "voice",
   VOICE_PRESETS.map((p) => ({ value: p.id, label: p.label })),
 );
-choices(
-  $("mode"),
-  "mode",
-  (Object.keys(MODES) as Mode[]).map((m) => ({ value: m, label: MODES[m].label, sub: MODES[m].description })),
+// Home: picking a mode opens its settings.
+$("mode").replaceChildren(
+  ...(Object.keys(MODES) as Mode[]).map((m) => {
+    const b = document.createElement("button");
+    b.textContent = MODES[m].label;
+    const sub = document.createElement("small");
+    sub.textContent = MODES[m].description;
+    b.append(sub);
+    b.onclick = () => {
+      prefs.mode = m;
+      savePrefs();
+      $("setupTitle").textContent = MODES[m].label;
+      $("setupDescription").textContent = MODES[m].description;
+      $("error").textContent = "";
+      showScreen("setup");
+    };
+    return b;
+  }),
 );
+$("backHome").onclick = () => showScreen("home");
 choices($("pattern"), "pattern", [
   { value: "triad", label: "ドミソ" },
   { value: "five", label: "ドレミファソ" },
@@ -96,11 +111,11 @@ $("start").onclick = async () => {
 let tuner: Tuner | null = null;
 
 $("openTuner").onclick = async () => {
-  $("error").textContent = "";
+  $("homeError").textContent = "";
   try {
     ({ ctx, sound, tracker } = await openAudio());
   } catch (e) {
-    $("error").textContent = errorText(e);
+    $("homeError").textContent = errorText(e);
     return;
   }
   tuner = new Tuner(
@@ -113,8 +128,7 @@ $("openTuner").onclick = async () => {
     },
     prefs.tolerance,
   );
-  $("setup").hidden = true;
-  $("tuner").hidden = false;
+  showScreen("tuner");
   tuner.start();
   tracker!.onSample = (s) => tuner?.push(s);
   tracker!.start();
@@ -126,15 +140,13 @@ $("closeTuner").onclick = () => {
   tuner = null;
   tracker?.stop();
   keepAwake(false);
-  $("tuner").hidden = true;
-  $("setup").hidden = false;
+  showScreen("home");
 };
 
 $("stop").onclick = () => end();
 
 function begin(s: Settings) {
-  $("setup").hidden = true;
-  $("practice").hidden = false;
+  showScreen("practice");
   $("modeLabel").textContent = MODES[s.mode].label + (s.slide ? "・スライド" : "");
   $("zone").style.width = `${(s.tolerance / 100) * 50}%`;
   history.length = 0;
@@ -156,8 +168,7 @@ function end() {
   trainer = null;
   tracker?.stop();
   keepAwake(false);
-  $("practice").hidden = true;
-  $("setup").hidden = false;
+  showScreen("setup");
   $("stop").textContent = "やめる";
 }
 

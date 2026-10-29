@@ -1,7 +1,7 @@
 import { keepAwake, openPlayback } from "../audio";
 import type { Sound } from "../sound";
 import { midiToFreq } from "../theory";
-import { $, checkbox, prefs, prefsListeners, savePrefs } from "../ui";
+import { $, checkbox, prefs, prefsListeners, savePrefs, showScreen } from "../ui";
 import { median } from "../pitch";
 import { openLesson } from "./lesson";
 import { makePlan, type Plan } from "./plan";
@@ -85,7 +85,7 @@ export async function openReplay(t: Take) {
   showLoop();
   $("rTitle").textContent = `${t.title}（${new Date(t.created).toLocaleString()}・${t.score}点）`;
   $("rMessage").textContent = "読み込み中…";
-  for (const s of ["setup", "karaokeSetup", "karaoke", "replay"]) $(s).hidden = s !== "replay";
+  showScreen("replay");
   const a = await openPlayback();
   sound = a.sound;
   if (mineUrl) URL.revokeObjectURL(mineUrl);

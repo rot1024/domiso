@@ -73,13 +73,25 @@ button.selected {
 
 .modes {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, …) keeps long descriptions from widening a column past the screen. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .modes button {
   text-align: left;
   padding: 12px;
+}
+
+.screen-head {
+  margin-bottom: 4px;
+}
+
+button.back {
+  background: none;
+  border: none;
+  padding: 6px 0;
+  color: var(--accent);
 }
 
 .modes small {

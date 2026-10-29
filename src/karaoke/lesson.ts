@@ -1,5 +1,5 @@
 import { keepAwake, openAudio } from "../audio";
-import { $, errorText, prefs } from "../ui";
+import { $, errorText, prefs, showScreen } from "../ui";
 import { progressOf, type Plan } from "./plan";
 import { KaraokePlayer } from "./player";
 import { PracticeSession, type PracticeState } from "./practice";
@@ -32,7 +32,7 @@ export async function openLesson(p: Plan) {
   // Created before anything is awaited, so they are still inside the tap.
   const voice = host.media(song.vocalsFile ?? song.audioName);
   const inst = host.media(song.instFile);
-  for (const s of ["setup", "karaokeSetup", "karaoke", "replay", "lesson"]) $(s).hidden = s !== "lesson";
+  showScreen("lesson");
   $("lTitle").textContent = song.title;
   $("lMessage").textContent = "準備中…";
   try {
