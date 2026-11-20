@@ -123,6 +123,16 @@
         <label><input type="checkbox" id="playVoice" /> お手本の声</label>
         <label><input type="checkbox" id="playMelody" /> ガイドメロディ</label>
         <label><input type="checkbox" id="playOriginal" /> 原曲（伴奏と声の代わりに聴く）</label>
+        <label><input type="checkbox" id="playSolfa" /> ドレミの声（バーの音名を合成の声で歌う）</label>
+      </section>
+      <section id="kKeySection" hidden>
+        <h2>キー <span id="kKeyLabel"></span></h2>
+        <div id="kKeys"></div>
+        <p class="hint">
+          メロディからキーと転調を判定し、そのキーのドを「ド」にして音名を出します（移動ド）。短調はラから始まります。
+          違っていたら直せます。
+        </p>
+        <button id="kKeyAuto" class="secondary" hidden>キーを自動判定に戻す</button>
       </section>
       <section>
         <h2>オクターブ</h2>
@@ -141,6 +151,8 @@
         <label><input type="checkbox" id="showContour" /> お手本の細かい音程の線を表示</label>
         <label><input type="checkbox" id="kOctaveFree" /> オクターブ違いもOK</label>
         <label><input type="checkbox" id="recordTakes" /> 歌を録音してテイクに残す（リプレイ用）</label>
+        <label><input type="checkbox" id="fixedDo" /> 音名を固定ド（C＝ド）で出す</label>
+        <label><input type="checkbox" id="lessonSolfa" /> 練習プランのガイドメロディをドレミの声にする</label>
       </section>
 
       <section id="kPlansSection" hidden>
@@ -158,6 +170,7 @@
       <button id="kSing" class="primary" disabled>歌う</button>
       <button id="kSave" class="secondary" disabled>解析データを保存</button>
       <button id="kGuideAudio" class="secondary" disabled>ガイドメロディを保存（音声）</button>
+      <button id="kSolfaAudio" class="secondary" disabled>ドレミの声を保存（音声）</button>
       <button id="kMidi" class="secondary" disabled>ガイドメロディを保存（MIDI）</button>
       <button id="kBack" class="secondary">もどる</button>
       <p class="error" id="kError"></p>
@@ -221,6 +234,7 @@
         <label><input type="checkbox" id="rVoice" /> お手本の声</label>
         <label><input type="checkbox" id="rInst" /> 伴奏</label>
         <label><input type="checkbox" id="rMelody" /> ガイドメロディ</label>
+        <label><input type="checkbox" id="rSolfa" /> ドレミの声</label>
         <label><input type="checkbox" id="rSplit" /> 左右に分ける（左: 自分、右: お手本）</label>
       </section>
       <section>

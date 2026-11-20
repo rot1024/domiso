@@ -175,6 +175,8 @@ export function assess(
   phrases: Phrase[],
   points: { t: number; m: number | null }[],
   tolerance: number,
+  /** Note names for the problem descriptions (fixed do by default). */
+  names?: string[],
 ): PhraseAssessment[] {
   const sorted = [...points].sort((a, b) => a.t - b.t);
   return phrases.map((ph) => {
@@ -195,7 +197,7 @@ export function assess(
     const bias = near.length >= 8 ? near.reduce((a, b) => a + b, 0) / near.length : null;
 
     const issues: { weight: number; text: string }[] = [];
-    const name = (i: number) => solfege(notes[i].midi);
+    const name = (i: number) => names?.[i] ?? solfege(notes[i].midi);
     const missing = idx.filter((_, k) => facts[k].voiced < 0.3);
     if (missing.length) issues.push({ weight: 3, text: `声が出ていない音がある（${missing.slice(0, 3).map(name).join("・")}）` });
     if (bias !== null && Math.abs(bias) >= 20) issues.push({ weight: 2, text: `全体に${bias < 0 ? "低い" : "高い"}（${Math.round(bias)}¢）` });

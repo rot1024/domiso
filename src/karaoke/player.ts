@@ -1,7 +1,9 @@
 import type { PitchSample } from "../pitch";
 import { centsOff, freqToMidi, midiToFreq } from "../theory";
+import { doOf, keyAt, notesDo, solfa, songKeys, syllable, type Syllable } from "./key";
 import { MELODY_ATTACK, MELODY_PARTIALS, melodyRelease } from "./melody";
 import { noteAt, type Song, type SongNote } from "./song";
+import { renderSyllable, syllableLead } from "./voice";
 
 /** What plays while you sing; any combination. */
 export interface Playback {
@@ -13,6 +15,8 @@ export interface Playback {
   melody: boolean;
   /** The original song (vocals and backing together). */
   original: boolean;
+  /** A synthetic voice singing the bars' names (ドレミ). */
+  solfa?: boolean;
   /** Your own recorded take (replay). */
   mine?: boolean;
   /** Put your take on the left and the reference voice on the right, to hear the difference. */
@@ -65,6 +69,7 @@ export const MAX_SPEED = 1.5;
 /** With the backing track also playing, the reference voice is a guide, so it sits lower. */
 const VOICE_GAIN_UNDER_INST = 0.5;
 const MELODY_GAIN = 0.22;
+const SOLFA_GAIN = 0.9;
 
 export interface PlayerOptions {
   play: Playback;
@@ -76,6 +81,10 @@ export interface PlayerOptions {
   extraLatency: number;
   /** Playback speed; 1 is normal. Pitch stays the same. */
   speed: number;
+  /** Name notes with C as do instead of following the song's key. */
+  fixedDo?: boolean;
+  /** Whenever the guide melody is asked for, sing it in solfège instead (practice plans). */
+  solfaGuide?: boolean;
 }
 
 export interface NoteStat {
@@ -108,6 +117,9 @@ export class KaraokePlayer {
    */
   readonly notes: SongNote[];
   readonly stats: NoteStat[];
+  /** Each note's movable-do name (ド, ミ♭, …) and the syllable sung for it. */
+  readonly names: string[];
+  readonly syllables: Syllable[];
   /** The singer's pitch over song time. */
   trace: { t: number; midi: number | null }[] = [];
   onEnd: () => void = () => {};
@@ -126,6 +138,9 @@ export class KaraokePlayer {
   private melodyOut: GainNode | null = null;
   private melodyOn: boolean;
   private scheduledUntil = 0;
+  private solfaOut: GainNode | null = null;
+  private solfaOn: boolean;
+  private solfaUntil = 0;
   private timer: number | undefined;
 
   constructor(
@@ -137,6 +152,9 @@ export class KaraokePlayer {
     const shift = 12 * opts.octave + song.offsetCents / 100;
     this.notes = song.notes.map((n) => ({ ...n, midi: n.midi + shift }));
     this.stats = this.notes.map(() => ({ total: 0, hit: 0, devSum: 0, devCount: 0 }));
+    const dos = notesDo(song, !!opts.fixedDo);
+    this.names = song.notes.map((n, i) => solfa(n.midi, dos[i]));
+    this.syllables = song.notes.map((n, i) => syllable(n.midi, dos[i]));
     this.speedValue = opts.speed;
 
     const { play } = opts;
@@ -151,8 +169,10 @@ export class KaraokePlayer {
     if (play.mine && tracks.mine) {
       this.addTrack("mine", tracks.mine, tracks.mineOffset ?? 0, 1, split ? -1 : 0, 1 / (tracks.mineSpeed ?? 1));
     }
-    // Without the reference recording, the guide melody carries the tune instead.
-    this.melodyOn = play.melody || (play.voice && !tracks.voice && !originalOn);
+    // Without the reference recording, a guide (tone or solfège) carries the tune instead.
+    const guide = play.melody || (play.voice && !tracks.voice && !originalOn && !play.solfa);
+    this.melodyOn = guide && !opts.solfaGuide;
+    this.solfaOn = !!play.solfa || (guide && !!opts.solfaGuide);
   }
 
   private addTrack(kind: ActiveTrack["kind"], el: HTMLAudioElement, offset: number, gain: number, pan = 0, rate = 1) {
@@ -171,18 +191,26 @@ export class KaraokePlayer {
    * running (muted), so playback can start again without a tap on iOS. Only tracks the player was
    * built with can be turned on.
    */
-  setMix(mix: { voice: boolean; inst: boolean; melody: boolean }) {
+  setMix(mix: { voice: boolean; inst: boolean; melody: boolean; solfa?: boolean }) {
     const instOn = mix.inst && this.active.some((t) => t.kind === "inst");
     for (const t of this.active) {
       if (t.kind === "inst") t.gain.gain.value = mix.inst ? 1 : 0;
       if (t.kind === "voice") t.gain.gain.value = mix.voice ? (instOn ? VOICE_GAIN_UNDER_INST : 1) : 0;
     }
-    const wasOn = this.melodyOn;
-    this.melodyOn = mix.melody || (mix.voice && !this.active.some((t) => t.kind === "voice"));
-    if (this.playing && this.melodyOn && !wasOn) this.startMelody();
-    if (this.playing && !this.melodyOn && wasOn) {
+    const guide = mix.melody || (mix.voice && !this.active.some((t) => t.kind === "voice") && !mix.solfa);
+    const melodyWas = this.melodyOn;
+    const solfaWas = this.solfaOn;
+    this.melodyOn = guide && !this.opts.solfaGuide;
+    this.solfaOn = !!mix.solfa || (guide && !!this.opts.solfaGuide);
+    if (this.playing && this.melodyOn && !melodyWas) this.startMelody();
+    if (this.playing && !this.melodyOn && melodyWas) {
       this.melodyOut?.disconnect();
       this.melodyOut = null;
+    }
+    if (this.playing && this.solfaOn && !solfaWas) this.startSolfa();
+    if (this.playing && !this.solfaOn && solfaWas) {
+      this.solfaOut?.disconnect();
+      this.solfaOut = null;
     }
   }
 
@@ -196,8 +224,9 @@ export class KaraokePlayer {
     if (this.playing) this.anchor = { ctx: this.ctx.currentTime, pos: this.position };
     this.speedValue = s;
     for (const t of this.active) t.el.playbackRate = s * t.rate;
-    if (this.playing && this.melodyOut) {
-      this.startMelody();
+    if (this.playing && (this.melodyOut || this.solfaOut)) {
+      if (this.melodyOut) this.startMelody();
+      if (this.solfaOut) this.startSolfa();
       this.tick();
     }
   }
@@ -236,6 +265,7 @@ export class KaraokePlayer {
       void t.el.play();
     }
     if (this.melodyOn) this.startMelody();
+    if (this.solfaOn) this.startSolfa();
     this.timer = window.setInterval(() => this.tick(), 100);
     this.tick();
   }
@@ -247,6 +277,15 @@ export class KaraokePlayer {
     this.melodyOut.gain.value = MELODY_GAIN;
     this.melodyOut.connect(this.ctx.destination);
     this.scheduledUntil = this.position;
+  }
+
+  /** Like startMelody, for the solfège voice. */
+  private startSolfa() {
+    this.solfaOut?.disconnect();
+    this.solfaOut = this.ctx.createGain();
+    this.solfaOut.gain.value = SOLFA_GAIN;
+    this.solfaOut.connect(this.ctx.destination);
+    this.solfaUntil = this.position;
   }
 
   pause() {
@@ -300,6 +339,8 @@ export class KaraokePlayer {
     // Disconnecting the melody bus silences every oscillator already scheduled on it.
     this.melodyOut?.disconnect();
     this.melodyOut = null;
+    this.solfaOut?.disconnect();
+    this.solfaOut = null;
   }
 
   private tick() {
@@ -320,6 +361,7 @@ export class KaraokePlayer {
       return;
     }
     if (this.melodyOut) this.scheduleMelody(pos + 1);
+    if (this.solfaOut) this.scheduleSolfa(pos + 1);
   }
 
   /**
@@ -371,6 +413,33 @@ export class KaraokePlayer {
       }
     }
     this.scheduledUntil = until;
+  }
+
+  /**
+   * Sings the notes starting before `until` (song time) in solfège, each rendered for the current speed:
+   * the consonant keeps its natural length and comes just before the note, the vowel fills the note.
+   */
+  private scheduleSolfa(until: number) {
+    const out = this.solfaOut!;
+    const rate = this.ctx.sampleRate;
+    this.notes.forEach((n, i) => {
+      if (n.start < this.solfaUntil || n.start >= until) return;
+      const vowelAt = this.ctxTimeOf(n.start);
+      const end = this.ctxTimeOf(n.end);
+      if (end <= this.ctx.currentTime) return;
+      const s = this.syllables[i];
+      const samples = renderSyllable(s, n.midi, end - vowelAt, rate, i + 1);
+      const buf = this.ctx.createBuffer(1, samples.length, rate);
+      buf.copyToChannel(samples, 0);
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(out);
+      const at = vowelAt - syllableLead(s);
+      // A note already under way starts partway in.
+      const late = Math.max(0, this.ctx.currentTime - at);
+      src.start(at + late, late);
+    });
+    this.solfaUntil = until;
   }
 
   handleSample(s: PitchSample) {
@@ -440,10 +509,10 @@ export class KaraokePlayer {
   }
 
   /** Deviation in cents from the note due at song time `t`, or null. */
-  deviationAt(freq: number, t: number): { note: SongNote; cents: number } | null {
+  deviationAt(freq: number, t: number): { note: SongNote; index: number; cents: number } | null {
     const i = noteAt(this.notes, t - this.latency * this.speedValue);
     if (i < 0) return null;
-    return { note: this.notes[i], cents: centsOff(freq, this.notes[i].midi, this.opts.octaveFree) };
+    return { note: this.notes[i], index: i, cents: centsOff(freq, this.notes[i].midi, this.opts.octaveFree) };
   }
 
   result(): KaraokeResult {
@@ -473,6 +542,11 @@ export class KaraokePlayer {
   noteRatio(i: number): number | null {
     const st = this.stats[i];
     return st.total ? st.hit / st.total : null;
+  }
+
+  /** Pitch class of do at song time `t`. */
+  doAt(t: number): number {
+    return this.opts.fixedDo ? 0 : doOf(keyAt(songKeys(this.song), t));
   }
 
   midiOfContour(index: number): number | null {

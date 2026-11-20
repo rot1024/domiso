@@ -1,4 +1,4 @@
-import { drawSemitoneGrid, prepareCanvas, solfege } from "../graph";
+import { drawSemitoneGrid, prepareCanvas } from "../graph";
 import type { KaraokePlayer } from "./player";
 import { noteAt } from "./song";
 
@@ -47,7 +47,7 @@ export class KaraokeView {
     const lo = center - HALF_SPAN;
     const y = (midi: number) => h - ((midi - lo) / (HALF_SPAN * 2)) * h;
 
-    drawSemitoneGrid(g, w, y, lo, lo + HALF_SPAN * 2, dpr);
+    drawSemitoneGrid(g, w, y, lo, lo + HALF_SPAN * 2, dpr, p.doAt(now));
 
     // Beats, when the song has them: the bars sit on this grid.
     const beats = p.song.tempo?.beats;
@@ -87,7 +87,7 @@ export class KaraokeView {
       if (x1 - x0 > 22 * dpr) {
         g.fillStyle = "rgba(255,255,255,0.85)";
         g.font = `${11 * dpr}px system-ui`;
-        g.fillText(solfege(n.midi), x0 + 4 * dpr, top - 3 * dpr);
+        g.fillText(p.names[i], x0 + 4 * dpr, top - 3 * dpr);
       }
     });
 

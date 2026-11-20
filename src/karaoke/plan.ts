@@ -83,10 +83,10 @@ export function makePlan(
   song: Song,
   notes: Song["notes"],
   points: { t: number; m: number | null }[],
-  opts: { octave: number; tolerance: number },
+  opts: { octave: number; tolerance: number; names?: string[] },
 ): Plan {
   const { phrases, blocks } = segment(notes);
-  const assessed = assess(notes, phrases, points, opts.tolerance);
+  const assessed = assess(notes, phrases, points, opts.tolerance, opts.names);
   // Only phrases the take actually covered can be judged; a take stopped halfway says nothing about the rest.
   const times = points.map((p) => p.t);
   const from = Math.min(...times);

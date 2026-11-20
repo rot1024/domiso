@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { solfege } from "../src/graph";
 import type { PitchSample, PitchTracker } from "../src/pitch";
 import type { Sound } from "../src/sound";
 import { midiToFreq } from "../src/theory";
@@ -61,6 +62,7 @@ function rig(plan: Plan, scores: number[]) {
   let fresh = false;
   const player = {
     notes: plan.song.notes,
+    names: plan.song.notes.map((n) => solfege(n.midi)),
     duration: plan.song.duration,
     speed: 1,
     trace: [],

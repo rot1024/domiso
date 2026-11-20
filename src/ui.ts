@@ -29,6 +29,12 @@ export interface Prefs {
   playVoice: boolean;
   playMelody: boolean;
   playOriginal: boolean;
+  /** Karaoke: a synthetic voice singing the notes' names. */
+  playSolfa: boolean;
+  /** Name notes with C as do instead of following the song's key. */
+  fixedDo: boolean;
+  /** Practice plans: sing the guide melody in solfège instead of playing a tone. */
+  lessonSolfa: boolean;
   /** Karaoke: playback speed (pitch is kept). */
   speed: number;
   /** Karaoke: record your voice while singing, for replay. */
@@ -38,6 +44,7 @@ export interface Prefs {
   rVoice: boolean;
   rInst: boolean;
   rMelody: boolean;
+  rSolfa: boolean;
   rSplit: boolean;
   rSpeed: number;
   rOffsetMs: number;
@@ -66,12 +73,16 @@ export const prefs: Prefs = {
   playVoice: true,
   playMelody: false,
   playOriginal: false,
+  playSolfa: false,
+  fixedDo: false,
+  lessonSolfa: false,
   speed: 1,
   recordTakes: true,
   rMine: true,
   rVoice: true,
   rInst: false,
   rMelody: false,
+  rSolfa: false,
   rSplit: false,
   rSpeed: 1,
   rOffsetMs: 0,

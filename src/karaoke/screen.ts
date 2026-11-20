@@ -1,10 +1,10 @@
 import { keepAwake, openAudio } from "../audio";
-import { solfege } from "../graph";
 import type { PitchTracker } from "../pitch";
 import { midiName } from "../theory";
 import { $, checkbox, choices, errorText, prefs, prefsListeners, savePrefs, showScreen } from "../ui";
 import { ANALYSIS_RATE, analyzeInWorker, decodeForAnalysis, type AnalysisJob } from "./load";
 import { soundRange } from "./trim";
+import { doOf, keyName, notesDo, songKeys, syllable, type KeySpan } from "./key";
 import { encodeWav, renderMelody } from "./melody";
 import { melodyToMidi } from "./midi";
 import { KaraokePlayer, MAX_SPEED, MIN_SPEED } from "./player";
@@ -15,6 +15,7 @@ import { parseSong, serializeSong, type Song } from "./song";
 import { parseTakeFile, serializeTake, songKey, type Take, type TakePoint } from "./take";
 import { deletePlan, deleteTake, plansFor, savePlan, saveTake, takesFor } from "./takes-db";
 import { KaraokeView } from "./view";
+import { renderSolfa } from "./voice";
 
 /** Audio files the user picked, by file name. */
 let audioFiles = new Map<string, ArrayBuffer>();
@@ -65,6 +66,15 @@ export function initKaraoke() {
   checkbox("playVoice");
   checkbox("playMelody");
   checkbox("playOriginal");
+  checkbox("playSolfa");
+  checkbox("fixedDo");
+  checkbox("lessonSolfa");
+  $("fixedDo").addEventListener("change", renderKeys);
+  $("kKeyAuto").onclick = () => {
+    if (!song) return;
+    delete song.keys;
+    renderKeys();
+  };
   choices($("octave"), "octave", [
     { value: -1, label: "1つ下" },
     { value: 0, label: "そのまま" },
@@ -118,6 +128,7 @@ export function initKaraoke() {
   $("kSave").onclick = save;
   $("kMidi").onclick = saveMidi;
   $("kGuideAudio").onclick = saveGuideAudio;
+  $("kSolfaAudio").onclick = saveSolfaAudio;
   $("kSing").onclick = () => void sing();
   $("kPlay").onclick = togglePlay;
   $("kRewind").onclick = () => player?.seek(player.position - 5);
@@ -138,6 +149,59 @@ function updateButtons() {
   $<HTMLButtonElement>("kSave").disabled = !song;
   $<HTMLButtonElement>("kMidi").disabled = !song;
   $<HTMLButtonElement>("kGuideAudio").disabled = !song;
+  $<HTMLButtonElement>("kSolfaAudio").disabled = !song;
+  renderKeys();
+}
+
+const TONICS = Array.from({ length: 12 }, (_, i) => i);
+
+/**
+ * The song's keys, one row per key change with a picker to correct it. Any correction is kept in the
+ * song (and its saved analysis data); later spans can also be removed when a key change is wrong.
+ */
+function renderKeys() {
+  $("kKeySection").hidden = !song;
+  if (!song) return;
+  const s = song;
+  const spans = songKeys(s);
+  $("kKeyLabel").textContent = prefs.fixedDo ? "（固定ドで表示中）" : spans.map(keyName).join(" → ");
+  $("kKeyAuto").hidden = !s.keys;
+  const set = (next: KeySpan[]) => {
+    s.keys = next;
+    renderKeys();
+  };
+  $("kKeys").replaceChildren(
+    ...spans.map((k, i) => {
+      const row = document.createElement("div");
+      row.className = "key-row";
+      const at = document.createElement("span");
+      at.textContent = i ? `${formatTime(k.start)}〜` : "最初";
+      const pick = document.createElement("select");
+      for (const mode of ["major", "minor"] as const) {
+        for (const tonic of TONICS) {
+          const o = document.createElement("option");
+          o.value = `${tonic}:${mode}`;
+          o.textContent =
+            mode === "major" ? `${keyName({ tonic, mode })} メジャー` : `${keyName({ tonic, mode })}（ド＝${keyName({ tonic: doOf({ tonic, mode }), mode: "major" })}）`;
+          o.selected = k.tonic === tonic && k.mode === mode;
+          pick.append(o);
+        }
+      }
+      pick.onchange = () => {
+        const [tonic, mode] = pick.value.split(":");
+        set(spans.map((x, j) => (j === i ? { ...x, tonic: Number(tonic), mode: mode as KeySpan["mode"] } : x)));
+      };
+      row.append(at, pick);
+      if (i) {
+        const remove = document.createElement("button");
+        remove.textContent = "転調なし";
+        remove.title = "ここで転調しないことにする";
+        remove.onclick = () => set(spans.filter((_, j) => j !== i));
+        row.append(remove);
+      }
+      return row;
+    }),
+  );
 }
 
 const isSongFile = (f: File) => /\.json$/i.test(f.name);
@@ -309,6 +373,17 @@ function saveGuideAudio() {
   download(new Blob([wav], { type: "audio/wav" }), `${song.title}.guide.wav`);
 }
 
+/** The melody sung in movable-do solfège (or fixed do), as a WAV file. */
+function saveSolfaAudio() {
+  if (!song) return;
+  const dos = notesDo(song, prefs.fixedDo);
+  const notes = song.notes.map((n) => ({ ...n, midi: n.midi + 12 * prefs.octave }));
+  const syl = song.notes.map((n, i) => syllable(n.midi, dos[i]));
+  const rate = 44100;
+  const wav = encodeWav(renderSolfa(notes, syl, rate, song.duration, song.offsetCents), rate);
+  download(new Blob([wav], { type: "audio/wav" }), `${song.title}.doremi.wav`);
+}
+
 function download(blob: Blob, name: string) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -339,12 +414,19 @@ async function sing() {
       original: original?.el ?? null,
     };
     player = new KaraokePlayer(a.ctx, song, tracks, {
-      play: { inst: prefs.playInst, voice: prefs.playVoice, melody: prefs.playMelody, original: prefs.playOriginal },
+      play: {
+        inst: prefs.playInst,
+        voice: prefs.playVoice,
+        melody: prefs.playMelody,
+        original: prefs.playOriginal,
+        solfa: prefs.playSolfa,
+      },
       octave: prefs.octave,
       tolerance: prefs.tolerance,
       octaveFree: prefs.octaveFree,
       extraLatency: prefs.latencyMs / 1000,
       speed: prefs.speed,
+      fixedDo: prefs.fixedDo,
     });
     view = new KaraokeView($<HTMLCanvasElement>("kGraph"), player, {
       tolerance: prefs.tolerance,
@@ -391,7 +473,7 @@ function readout(freq: number | null) {
     cents.textContent = "";
     return;
   }
-  note.textContent = solfege(target.midi);
+  note.textContent = player.names[d!.index];
   note.classList.remove("idle");
   const c = Math.round(d!.cents);
   cents.textContent = `${midiName(Math.round(target.midi))}  ${c === 0 ? "±" : c > 0 ? "+" : "−"}${Math.abs(c)}¢`;

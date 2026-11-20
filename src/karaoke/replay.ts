@@ -33,7 +33,7 @@ let plan: Plan | null = null;
 
 export function initReplay(h: ReplayHost) {
   host = h;
-  for (const k of ["rMine", "rVoice", "rInst", "rMelody", "rSplit"] as const) {
+  for (const k of ["rMine", "rVoice", "rInst", "rMelody", "rSolfa", "rSplit"] as const) {
     checkbox(k);
     $<HTMLInputElement>(k).addEventListener("change", () => void rebuild());
   }
@@ -97,7 +97,7 @@ export async function openReplay(t: Take) {
   $("rMessage").textContent = "線をタップすると、その音の「自分の声 → 正しい音」を聞き比べられます";
   keepAwake(true);
   await rebuild(0);
-  plan = makePlan(host.song()!, player!.notes, t.points, { octave: prefs.octave, tolerance: prefs.tolerance });
+  plan = makePlan(host.song()!, player!.notes, t.points, { octave: prefs.octave, tolerance: prefs.tolerance, names: player!.names });
   renderWeak();
   requestAnimationFrame(frame);
 }
@@ -154,6 +154,7 @@ async function rebuild(at?: number) {
         inst: prefs.rInst,
         voice: prefs.rVoice,
         melody: prefs.rMelody,
+        solfa: prefs.rSolfa,
         original: false,
         mine: prefs.rMine,
         split: prefs.rSplit,
@@ -163,6 +164,7 @@ async function rebuild(at?: number) {
       octaveFree: prefs.octaveFree,
       extraLatency: 0,
       speed: prefs.rSpeed,
+      fixedDo: prefs.fixedDo,
     },
   );
   player.loadTrace(take.points.map((p) => ({ t: p.t, midi: p.m })));

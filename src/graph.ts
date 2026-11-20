@@ -1,9 +1,9 @@
+import { solfa } from "./karaoke/key";
 import { midiName } from "./theory";
 
-export const SOLFEGE = ["ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "ラ#", "シ"];
-
+/** Fixed-do name (C = ド). */
 export function solfege(midi: number): string {
-  return SOLFEGE[((Math.round(midi) % 12) + 12) % 12];
+  return solfa(midi, 0);
 }
 
 /** Resizes the canvas to its CSS size at device resolution and returns a cleared context. */
@@ -20,7 +20,10 @@ export function prepareCanvas(canvas: HTMLCanvasElement): { g: CanvasRenderingCo
   return { g, w, h, dpr };
 }
 
-/** Horizontal line per semitone between `lo` and `hi`, labeled on natural notes, C emphasized. */
+/**
+ * Horizontal line per semitone between `lo` and `hi`, labeled on the notes of the scale whose do is
+ * `doPc` (C by default), do emphasized.
+ */
 export function drawSemitoneGrid(
   g: CanvasRenderingContext2D,
   w: number,
@@ -28,10 +31,11 @@ export function drawSemitoneGrid(
   lo: number,
   hi: number,
   dpr: number,
+  doPc = 0,
 ) {
   g.font = `${12 * dpr}px system-ui`;
   for (let m = Math.ceil(lo); m <= hi; m++) {
-    const pc = ((m % 12) + 12) % 12;
+    const pc = (((m - doPc) % 12) + 12) % 12;
     const natural = ![1, 3, 6, 8, 10].includes(pc);
     g.strokeStyle = pc === 0 ? "rgba(255,255,255,0.35)" : natural ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.06)";
     g.lineWidth = dpr;
@@ -41,7 +45,7 @@ export function drawSemitoneGrid(
     g.stroke();
     if (natural) {
       g.fillStyle = "#8b90a0";
-      g.fillText(`${SOLFEGE[pc]} ${midiName(m)}`, 6 * dpr, y(m) - 3 * dpr);
+      g.fillText(`${solfa(m, doPc)} ${midiName(m)}`, 6 * dpr, y(m) - 3 * dpr);
     }
   }
 }

@@ -1,3 +1,5 @@
+import type { KeySpan } from "./key";
+
 /** A semitone-quantized note of the reference melody. Times are in seconds from the start of the audio. */
 export interface SongNote {
   start: number;
@@ -25,6 +27,8 @@ export interface Song {
   originalFile?: string;
   /** Detected tempo and beat times (seconds); notes are snapped to `division` cells per beat. */
   tempo?: { bpm: number; beats: number[]; division: number };
+  /** Keys set by hand (movable do follows them); absent means detect them from the notes. */
+  keys?: KeySpan[];
   duration: number;
   /** Contour resolution in seconds. */
   hop: number;
@@ -54,6 +58,13 @@ export function parseSong(text: string): Song {
   }
   if (d.audioStart !== undefined && typeof d.audioStart !== "number") throw new Error("解析データが壊れています");
   if (d.tempo !== undefined && (typeof d.tempo?.bpm !== "number" || !Array.isArray(d.tempo.beats))) {
+    throw new Error("解析データが壊れています");
+  }
+  if (
+    d.keys !== undefined &&
+    (!Array.isArray(d.keys) ||
+      !d.keys.every((k: any) => typeof k?.start === "number" && Number.isInteger(k.tonic) && (k.mode === "major" || k.mode === "minor")))
+  ) {
     throw new Error("解析データが壊れています");
   }
   for (const n of d.notes) {

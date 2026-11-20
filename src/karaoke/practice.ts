@@ -1,8 +1,8 @@
 import type { PitchSample, PitchTracker } from "../pitch";
 import type { Sound } from "../sound";
-import { solfege } from "../graph";
 import { median } from "../pitch";
 import { centsOff, midiToFreq } from "../theory";
+import { spokenSolfa } from "./key";
 import { JOIN_STAGE, progressOf, type Plan, type PlanPhrase, type Stage } from "./plan";
 import type { KaraokePlayer } from "./player";
 
@@ -373,9 +373,10 @@ export class PracticeSession {
       return score;
     }
     const n = this.player.notes[worst.index];
+    const name = this.player.names[worst.index];
     const dir = worst.bias < 0 ? "低い" : "高い";
-    this.set({ message: `${score}点・「${solfege(n.midi)}」が${dir}（${Math.round(worst.bias)}¢）` });
-    await this.say(`${score}点。${solfege(n.midi)}が${dir}`);
+    this.set({ message: `${score}点・「${name}」が${dir}（${Math.round(worst.bias)}¢）` });
+    await this.say(`${score}点。${spokenSolfa(name)}が${dir}`);
     // What you sang on that note, then the right pitch.
     const sung = this.player.trace.filter((p) => p.t >= n.start && p.t < n.end && p.midi !== null).map((p) => p.midi!);
     if (sung.length) {
@@ -394,11 +395,11 @@ export class PracticeSession {
     await this.say("ピアノのあとに、同じ音を出してください");
     let ok = 0;
     const notes = this.player.notes.slice(first, last + 1);
-    for (const n of notes) {
+    for (const [k, n] of notes.entries()) {
       let passed = false;
       for (let tries = 0; tries < 2 && !passed; tries++) {
         await this.waitIfPaused();
-        this.set({ message: `「${solfege(n.midi)}」` });
+        this.set({ message: `「${this.player.names[first + k]}」` });
         const at = this.sound.ctx.currentTime + 0.05;
         this.sound.playNote(Math.round(n.midi), at, 0.9);
         await this.wait(1.1);

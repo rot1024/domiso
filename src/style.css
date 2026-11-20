@@ -450,3 +450,32 @@ input[type="range"] {
   width: 100%;
   padding: 14px;
 }
+
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.key-row span {
+  min-width: 3.5em;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.key-row select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.key-row button {
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}

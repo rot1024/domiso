@@ -61,6 +61,8 @@ export async function openLesson(p: Plan) {
         octaveFree: prefs.octaveFree,
         extraLatency: prefs.latencyMs / 1000,
         speed: 1,
+        fixedDo: prefs.fixedDo,
+        solfaGuide: prefs.lessonSolfa,
       },
     );
     view = new KaraokeView($<HTMLCanvasElement>("lGraph"), player, { tolerance: p.tolerance, showContour: prefs.showContour });
